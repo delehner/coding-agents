@@ -26,3 +26,6 @@ prds/
 
 # Contexts
 contexts/
+
+# Manifests
+manifests/
