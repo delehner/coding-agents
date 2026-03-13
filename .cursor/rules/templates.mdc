@@ -1,0 +1,29 @@
+---
+description: Conventions for PRD and project context templates
+globs: templates/**/*.md
+alwaysApply: false
+---
+
+# Template Conventions
+
+## PRD Template (`templates/prd.md`)
+
+- Keep the "Agent Pipeline Notes" section at the bottom — it's agent-facing metadata
+- Every requirement needs **acceptance criteria** with checkboxes
+- The "Scope Classification" booleans (Has UI, Has API, etc.) drive which agents are relevant
+- Use `[placeholder]` syntax for fields the user fills in
+
+## Project Context Template (`templates/project-context.md`)
+
+This template is dual-compatible:
+- **Claude Code**: copy as `CLAUDE.md` in the target repo root
+- **Cursor**: copy as `.cursor/rules/project-context.md` or `.cursorrules`
+
+When editing, keep it compatible with both tools:
+- Use standard markdown only (no tool-specific syntax)
+- Mark optional sections with `> Remove this section if not applicable`
+- Keep under 300 lines — LLMs follow shorter instructions more reliably
+
+## Example PRDs (`templates/examples/`)
+
+Example PRDs should be realistic and complete — they serve as both documentation and test fixtures for pipeline runs.

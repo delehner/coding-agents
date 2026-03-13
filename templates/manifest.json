@@ -1,0 +1,53 @@
+{
+  "name": "Project Name",
+  "description": "Brief description of what this manifest delivers.",
+  "orders": [
+    {
+      "name": "1 - Foundation",
+      "description": "First batch — sets up the base that later orders depend on.",
+      "prds": [
+        {
+          "prd": "./prds/01-example.md",
+          "repositories": [
+            {
+              "url": "https://github.com/org/repo-1",
+              "branch": "main",
+              "context": "./contexts/repo-1.md"
+            }
+          ]
+        },
+        {
+          "prd": "./prds/02-parallel-work.md",
+          "repositories": [
+            {
+              "url": "https://github.com/org/repo-2",
+              "branch": "develop",
+              "context": "./contexts/repo-2.md"
+            },
+            {
+              "url": "https://github.com/org/shared-lib",
+              "branch": "main",
+              "context": "./contexts/shared-lib.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 - Feature Work",
+      "description": "Depends on order 1 being merged. PRDs here run in parallel.",
+      "prds": [
+        {
+          "prd": "./prds/03-feature.md",
+          "repositories": [
+            {
+              "url": "https://github.com/org/repo-1",
+              "branch": "main",
+              "context": "./contexts/repo-1.md"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

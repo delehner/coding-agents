@@ -1,0 +1,528 @@
+#!/bin/bash
+set -euo pipefail
+
+# =============================================================================
+# run-pipeline.sh — Single PRD × Single Repo pipeline
+# =============================================================================
+# Runs the full agent sequence for ONE PRD against ONE repository.
+# Called by orchestrator.sh for each PRD×repo combination.
+# Can also be invoked directly for single runs.
+#
+# By default, agents run inside a Dev Container for isolation.
+# Use --no-devcontainer to run directly on the host.
+#
+# Usage:
+#   ./pipeline/run-pipeline.sh \
+#     --prd <path-to-prd> \
+#     --repo <github-repo-url> \
+#     [--branch <base-branch>] \
+#     [--workdir <working-directory>] \
+#     [--agents <comma-separated-agent-list>] \
+#     [--skip-pr] \
+#     [--no-devcontainer] \
+#     [--model <model-name>]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source "$SCRIPT_DIR/lib/progress.sh"
+source "$SCRIPT_DIR/lib/git-utils.sh"
+source "$SCRIPT_DIR/lib/validation.sh"
+
+# --- Load .env if present ---
+if [ -f "$SCRIPT_DIR/../.env" ]; then
+  set -a
+  source "$SCRIPT_DIR/../.env"
+  set +a
+fi
+
+# --- Logging ---
+LOG_LEVEL="${LOG_LEVEL:-info}"
+LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
+if [[ "$LOG_DIR" != /* ]]; then
+  LOG_DIR="$ROOT_DIR/${LOG_DIR#./}"
+fi
+mkdir -p "$LOG_DIR"
+
+log() {
+  local level="$1"
+  local msg="$2"
+  local timestamp
+  timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  echo "[$timestamp] [$level] $msg" >&2
+  echo "[$timestamp] [$level] $msg" >> "$LOG_DIR/pipeline.log"
+}
+
+# --- Argument Parsing ---
+PRD_FILE=""
+REPO_URL=""
+CONTEXT_FILE=""
+BASE_BRANCH="${DEFAULT_BASE_BRANCH:-main}"
+WORK_DIR="${PIPELINE_WORK_DIR:-/tmp/coding-agents-work}"
+AGENTS="architect,designer,developer,tester,reviewer"
+SKIP_PR=false
+MODEL="${CLAUDE_MODEL:-claude-opus-4-6}"
+MAX_ITERATIONS="${PIPELINE_MAX_ITERATIONS:-10}"
+USE_DEVCONTAINER="${USE_DEVCONTAINER:-true}"
+PIPELINE_GIT_NAME=""
+PIPELINE_GIT_EMAIL=""
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --prd) PRD_FILE="$2"; shift 2 ;;
+    --repo) REPO_URL="$2"; shift 2 ;;
+    --context) CONTEXT_FILE="$2"; shift 2 ;;
+    --branch) BASE_BRANCH="$2"; shift 2 ;;
+    --workdir) WORK_DIR="$2"; shift 2 ;;
+    --agents) AGENTS="$2"; shift 2 ;;
+    --skip-pr) SKIP_PR=true; shift ;;
+    --no-context-update) UPDATE_PROJECT_CONTEXT=false; shift ;;
+    --no-devcontainer) USE_DEVCONTAINER=false; shift ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
+    -h|--help)
+      cat <<'HELP'
+Usage: run-pipeline.sh --prd <path> --repo <url> [options]
+
+Options:
+  --prd <path>           Path to PRD file (required)
+  --repo <url>           GitHub repository URL (required)
+  --context <path>       Project context file injected as CLAUDE.md (ephemeral, never committed)
+  --branch <name>        Base branch (default: main)
+  --workdir <path>       Working directory for cloned repo
+  --agents <list>        Comma-separated agent list (default: architect,designer,developer,tester,reviewer)
+  --skip-pr              Don't create a PR at the end
+  --no-context-update    Don't update CLAUDE.md after agents finish
+  --no-devcontainer      Run agents directly on host instead of inside a Dev Container
+  --model <name>         Claude model to use (default: claude-opus-4-6)
+  --max-iterations <n>   Max iterations per agent (default: 10)
+HELP
+      exit 0
+      ;;
+    *) log "ERROR" "Unknown argument: $1"; exit 1 ;;
+  esac
+done
+
+if [ -z "$PRD_FILE" ] || [ -z "$REPO_URL" ]; then
+  log "ERROR" "Both --prd and --repo are required. Use --help for usage."
+  exit 1
+fi
+
+# --- Resolve PRD path ---
+PRD_FILE=$(realpath "$PRD_FILE")
+
+# --- Validate ---
+log "INFO" "========================================="
+log "INFO" "  Coding Agents Pipeline"
+log "INFO" "========================================="
+log "INFO" "PRD:            $PRD_FILE"
+log "INFO" "Repo:           $REPO_URL"
+log "INFO" "Branch:         $BASE_BRANCH"
+log "INFO" "Agents:         $AGENTS"
+log "INFO" "Model:          $MODEL"
+log "INFO" "Max Iterations: $MAX_ITERATIONS"
+log "INFO" "Dev Container:  $USE_DEVCONTAINER"
+log "INFO" "========================================="
+
+validate_environment || exit 1
+validate_prd "$PRD_FILE" || exit 1
+
+if [ "$USE_DEVCONTAINER" = true ]; then
+  validate_devcontainer_deps || exit 1
+fi
+
+# --- Resolve Git identity used by agent commits ---
+if [ -n "${GIT_AUTHOR_NAME:-}" ] && [ -n "${GIT_AUTHOR_EMAIL:-}" ]; then
+  PIPELINE_GIT_NAME="$GIT_AUTHOR_NAME"
+  PIPELINE_GIT_EMAIL="$GIT_AUTHOR_EMAIL"
+else
+  PIPELINE_GIT_NAME="$(git config --global --get user.name 2>/dev/null || true)"
+  PIPELINE_GIT_EMAIL="$(git config --global --get user.email 2>/dev/null || true)"
+fi
+
+if [ -n "$PIPELINE_GIT_NAME" ] && [ -n "$PIPELINE_GIT_EMAIL" ]; then
+  export GIT_AUTHOR_NAME="$PIPELINE_GIT_NAME"
+  export GIT_AUTHOR_EMAIL="$PIPELINE_GIT_EMAIL"
+  export GIT_COMMITTER_NAME="$PIPELINE_GIT_NAME"
+  export GIT_COMMITTER_EMAIL="$PIPELINE_GIT_EMAIL"
+  log "INFO" "Using Git identity for pipeline commits: $PIPELINE_GIT_NAME <$PIPELINE_GIT_EMAIL>"
+else
+  log "WARN" "Git identity not found on host (user.name/user.email). Agent commits may use fallback identity."
+fi
+
+# --- Prepare Repository ---
+REPO_NAME=$(basename "$REPO_URL" .git)
+REPO_WORKDIR="$WORK_DIR/$REPO_NAME"
+
+log "INFO" "Preparing repository at $REPO_WORKDIR..."
+clone_or_prepare_repo "$REPO_URL" "$REPO_WORKDIR" "$BASE_BRANCH"
+
+FEATURE_BRANCH=$(generate_branch_name "$PRD_FILE")
+create_feature_branch "$REPO_WORKDIR" "$FEATURE_BRANCH"
+
+log "INFO" "Working on branch: $FEATURE_BRANCH"
+
+# Ensure local-only runtime artifacts are ignored in target repo
+mkdir -p "$REPO_WORKDIR/.git/info"
+if ! grep -q '^\.agent-progress/' "$REPO_WORKDIR/.git/info/exclude" 2>/dev/null; then
+  echo ".agent-progress/" >> "$REPO_WORKDIR/.git/info/exclude"
+fi
+if ! grep -q '^\.pipeline/' "$REPO_WORKDIR/.git/info/exclude" 2>/dev/null; then
+  echo ".pipeline/" >> "$REPO_WORKDIR/.git/info/exclude"
+fi
+if ! grep -q '^logs/' "$REPO_WORKDIR/.git/info/exclude" 2>/dev/null; then
+  echo "logs/" >> "$REPO_WORKDIR/.git/info/exclude"
+fi
+
+# --- Inject Context File (ephemeral, never committed) ---
+if [ -n "$CONTEXT_FILE" ]; then
+  CONTEXT_FILE=$(realpath "$CONTEXT_FILE")
+  if [ -f "$CONTEXT_FILE" ]; then
+    log "INFO" "Injecting context file: $CONTEXT_FILE → CLAUDE.md (ephemeral)"
+    cp "$CONTEXT_FILE" "$REPO_WORKDIR/CLAUDE.md"
+    if ! grep -q '^CLAUDE.md$' "$REPO_WORKDIR/.git/info/exclude" 2>/dev/null; then
+      echo "CLAUDE.md" >> "$REPO_WORKDIR/.git/info/exclude"
+    fi
+  else
+    log "WARN" "Context file not found: $CONTEXT_FILE (continuing without it)"
+  fi
+fi
+
+# Copy PRD into the repo for agent reference
+PRD_SLUG=$(basename "$PRD_FILE" .md)
+mkdir -p "$REPO_WORKDIR/docs/architecture/$PRD_SLUG"
+cp "$PRD_FILE" "$REPO_WORKDIR/docs/architecture/$PRD_SLUG/prd.md"
+cd "$REPO_WORKDIR" && git add "docs/architecture/$PRD_SLUG/prd.md" && git commit -m "docs: add PRD for $PRD_SLUG" --allow-empty 2>/dev/null || true
+
+# --- Initialize Progress ---
+init_progress_dir "$REPO_WORKDIR"
+rm -f "$REPO_WORKDIR/$PROGRESS_DIR/"*.md 2>/dev/null || true
+log "INFO" "Cleared previous agent progress state for a fresh PRD run"
+
+# =============================================================================
+# Dev Container Setup
+# =============================================================================
+CONTAINER_ID=""
+CONTAINER_WORKSPACE=""
+DEVCONTAINER_CONFIG=""
+
+cleanup_container() {
+  if [ -n "$CONTAINER_ID" ]; then
+    log "INFO" "Stopping Dev Container..."
+    docker stop "$CONTAINER_ID" 2>/dev/null || true
+    docker rm "$CONTAINER_ID" 2>/dev/null || true
+  fi
+}
+
+if [ "$USE_DEVCONTAINER" = true ]; then
+  DEVCONTAINER_CONFIG="$SCRIPT_DIR/../.devcontainer/agent/devcontainer.json"
+
+  # Stage pipeline tools in the workspace so they're accessible inside the container
+  PIPELINE_STAGING="$REPO_WORKDIR/.pipeline"
+  mkdir -p "$PIPELINE_STAGING"
+  cp -r "$SCRIPT_DIR/." "$PIPELINE_STAGING/pipeline/"
+  cp -r "$SCRIPT_DIR/../agents" "$PIPELINE_STAGING/agents"
+  cp "$PRD_FILE" "$PIPELINE_STAGING/prd.md"
+
+  # Helper script for running claude -p from a prompt file inside the container
+  cat > "$PIPELINE_STAGING/run-claude.sh" << 'HELPER'
+#!/bin/bash
+PROMPT_FILE="$1"; shift
+claude -p "$(cat "$PROMPT_FILE")" "$@"
+HELPER
+  chmod +x "$PIPELINE_STAGING/run-claude.sh"
+
+  # Exclude from git
+  if ! grep -q '^\.pipeline/' "$REPO_WORKDIR/.git/info/exclude" 2>/dev/null; then
+    echo ".pipeline/" >> "$REPO_WORKDIR/.git/info/exclude"
+  fi
+
+  log "INFO" "Starting Dev Container (first run builds the image, may take a few minutes)..."
+
+  CONTAINER_UP_OUTPUT=$(devcontainer up \
+    --workspace-folder "$REPO_WORKDIR" \
+    --config "$DEVCONTAINER_CONFIG" 2>&1) || {
+    log "ERROR" "Failed to start Dev Container. Output:"
+    echo "$CONTAINER_UP_OUTPUT" >&2
+    exit 1
+  }
+
+  # Parse container info from devcontainer up JSON output
+  CONTAINER_ID=$(echo "$CONTAINER_UP_OUTPUT" | grep '{' | tail -1 | jq -r '.containerId // empty' 2>/dev/null || true)
+  CONTAINER_WORKSPACE=$(echo "$CONTAINER_UP_OUTPUT" | grep '{' | tail -1 | jq -r '.remoteWorkspaceFolder // empty' 2>/dev/null || true)
+
+  if [ -z "$CONTAINER_WORKSPACE" ]; then
+    CONTAINER_WORKSPACE="/workspaces/$REPO_NAME"
+  fi
+
+  short_container_id="${CONTAINER_ID:0:12}"
+  log "INFO" "Dev Container started (ID: $short_container_id)"
+  log "INFO" "Container workspace: $CONTAINER_WORKSPACE"
+
+  trap cleanup_container EXIT
+fi
+
+# =============================================================================
+# Helper: run a command either inside the container or on the host
+# =============================================================================
+exec_in_environment() {
+  if [ "$USE_DEVCONTAINER" = true ]; then
+    local remote_env_args=()
+    if [ -n "$PIPELINE_GIT_NAME" ] && [ -n "$PIPELINE_GIT_EMAIL" ]; then
+      remote_env_args+=(
+        --remote-env "GIT_AUTHOR_NAME=$PIPELINE_GIT_NAME"
+        --remote-env "GIT_AUTHOR_EMAIL=$PIPELINE_GIT_EMAIL"
+        --remote-env "GIT_COMMITTER_NAME=$PIPELINE_GIT_NAME"
+        --remote-env "GIT_COMMITTER_EMAIL=$PIPELINE_GIT_EMAIL"
+      )
+    fi
+    if [ -n "$CONTAINER_WORKSPACE" ]; then
+      remote_env_args+=(--remote-env "LOG_DIR=$CONTAINER_WORKSPACE/.pipeline/logs")
+    fi
+
+    devcontainer exec \
+      --workspace-folder "$REPO_WORKDIR" \
+      --config "$DEVCONTAINER_CONFIG" \
+      "${remote_env_args[@]}" \
+      "$@"
+  else
+    "$@"
+  fi
+}
+
+validate_claude_auth() {
+  if [ "$USE_DEVCONTAINER" = true ]; then
+    if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+      log "INFO" "CLAUDE_CODE_OAUTH_TOKEN detected in pipeline environment (length: ${#CLAUDE_CODE_OAUTH_TOKEN})"
+    else
+      log "INFO" "CLAUDE_CODE_OAUTH_TOKEN is not set in pipeline environment"
+    fi
+
+    set +e
+    auth_status_output=$(exec_in_environment bash -lc "claude auth status 2>&1")
+    local auth_exit=$?
+    set -e
+
+    if [ $auth_exit -eq 0 ] && echo "$auth_status_output" | grep -q '"loggedIn":[[:space:]]*true'; then
+      log "INFO" "Claude auth preflight succeeded inside Dev Container"
+      return 0
+    fi
+
+    if [ -n "$auth_status_output" ]; then
+      log "ERROR" "Dev Container auth status:"
+      while IFS= read -r line; do
+        log "ERROR" "  $line"
+      done <<< "$auth_status_output"
+    fi
+
+    if [ $auth_exit -ne 0 ]; then
+      log "ERROR" "Claude auth status command failed inside Dev Container (exit: $auth_exit)"
+    else
+      log "ERROR" "Claude Code is not authenticated inside the Dev Container."
+    fi
+
+    log "ERROR" "Fix one of the following, then rerun:"
+    log "ERROR" "  1) Set ANTHROPIC_API_KEY in .env so container auth uses API key"
+    log "ERROR" "  2) Set CLAUDE_CODE_OAUTH_TOKEN in .env (generate with: claude setup-token)"
+    log "ERROR" "  3) Run with --no-devcontainer to use host Claude auth directly"
+    return 1
+  fi
+
+  return 0
+}
+
+# =============================================================================
+# Run Agents
+# =============================================================================
+validate_claude_auth || exit 1
+
+IFS=',' read -ra AGENT_LIST <<< "$AGENTS"
+PREVIOUS_AGENTS=""
+
+for agent in "${AGENT_LIST[@]}"; do
+  agent=$(echo "$agent" | xargs)
+
+  log "INFO" ""
+  log "INFO" "========================================="
+  log "INFO" "  Running Agent: $agent"
+  log "INFO" "========================================="
+
+  if is_agent_completed "$REPO_WORKDIR" "$agent"; then
+    log "INFO" "Agent $agent already completed. Skipping."
+    PREVIOUS_AGENTS="${PREVIOUS_AGENTS:+$PREVIOUS_AGENTS,}$agent"
+    continue
+  fi
+
+  # Run the agent via Ralph Loop
+  set +e
+  if [ "$USE_DEVCONTAINER" = true ]; then
+    exec_in_environment \
+      bash "$CONTAINER_WORKSPACE/.pipeline/pipeline/run-agent.sh" \
+        --agent "$agent" \
+        --workdir "$CONTAINER_WORKSPACE" \
+        --prd "$CONTAINER_WORKSPACE/.pipeline/prd.md" \
+        --max-iterations "$MAX_ITERATIONS" \
+        --model "$MODEL" \
+        --previous-agents "$PREVIOUS_AGENTS"
+  else
+    "$SCRIPT_DIR/run-agent.sh" \
+      --agent "$agent" \
+      --workdir "$REPO_WORKDIR" \
+      --prd "$PRD_FILE" \
+      --max-iterations "$MAX_ITERATIONS" \
+      --model "$MODEL" \
+      --previous-agents "$PREVIOUS_AGENTS"
+  fi
+  agent_exit=$?
+  set -e
+
+  if ! validate_agent_output "$REPO_WORKDIR" "$agent"; then
+    log "WARN" "Agent $agent did not complete successfully (exit: $agent_exit)"
+
+    case "$agent" in
+      designer)
+        log "INFO" "Designer is non-blocking — continuing pipeline"
+        ;;
+      *)
+        log "ERROR" "Critical agent $agent failed. Stopping pipeline."
+        log "ERROR" "Review logs at: $LOG_DIR/"
+        log "ERROR" "Review progress at: $REPO_WORKDIR/$PROGRESS_DIR/"
+        exit 1
+        ;;
+    esac
+  fi
+
+  PREVIOUS_AGENTS="${PREVIOUS_AGENTS:+$PREVIOUS_AGENTS,}$agent"
+
+  log "INFO" "Agent $agent finished."
+done
+
+# =============================================================================
+# Update Project Context
+# =============================================================================
+UPDATE_CONTEXT="${UPDATE_PROJECT_CONTEXT:-true}"
+if [ "$UPDATE_CONTEXT" = "true" ] && [ -f "$REPO_WORKDIR/CLAUDE.md" ]; then
+  log "INFO" ""
+  log "INFO" "========================================="
+  log "INFO" "  Updating Project Context (CLAUDE.md)"
+  log "INFO" "========================================="
+
+  CONTEXT_IS_EPHEMERAL=false
+  if grep -q '^CLAUDE.md$' "$REPO_WORKDIR/.git/info/exclude" 2>/dev/null; then
+    CONTEXT_IS_EPHEMERAL=true
+  fi
+
+  if [ "$CONTEXT_IS_EPHEMERAL" = true ]; then
+    COMMIT_INSTRUCTION="After updating CLAUDE.md, do NOT commit it — it is an ephemeral file managed outside this repo."
+  else
+    COMMIT_INSTRUCTION="After updating, commit with message: \"docs: update project context after pipeline run\""
+  fi
+
+  CONTEXT_PROMPT=$(cat <<CTXEOF
+You are updating the project context file (CLAUDE.md) to reflect changes made by a development pipeline.
+
+Read the current CLAUDE.md, then review the code that was just added or modified. Update CLAUDE.md to accurately describe:
+- Any new directories, files, or patterns that were introduced
+- Any new dependencies that were added
+- Any new conventions established by the code
+- Updated "Common Tasks" if new workflows were introduced
+
+Keep the same format and structure. Only update sections that are affected by the changes. Do not remove existing content that is still accurate. Be concise.
+
+$COMMIT_INSTRUCTION
+CTXEOF
+)
+
+  set +e
+  if [ "$USE_DEVCONTAINER" = true ]; then
+    # Write prompt to a file accessible inside the container
+    echo "$CONTEXT_PROMPT" > "$REPO_WORKDIR/.pipeline/.context-prompt.tmp"
+    exec_in_environment \
+      bash "$CONTAINER_WORKSPACE/.pipeline/run-claude.sh" \
+        "$CONTAINER_WORKSPACE/.pipeline/.context-prompt.tmp" \
+        --model "$MODEL" \
+        --allowedTools "Edit,Write,Bash,Read,MultiEdit" \
+        --dangerously-skip-permissions \
+        --output-format text \
+      2>&1 | tee -a "$LOG_DIR/context_update.log"
+  else
+    claude -p "$CONTEXT_PROMPT" \
+      --model "$MODEL" \
+      --allowedTools "Edit,Write,Bash,Read,MultiEdit" \
+      --dangerously-skip-permissions \
+      --output-format text \
+      2>&1 | tee -a "$LOG_DIR/context_update.log"
+  fi
+  context_exit=$?
+  set -e
+
+  if [ $context_exit -eq 0 ]; then
+    log "INFO" "Project context updated successfully"
+    if [ "$CONTEXT_IS_EPHEMERAL" = true ] && [ -n "$CONTEXT_FILE" ] && [ -f "$REPO_WORKDIR/CLAUDE.md" ]; then
+      cp "$REPO_WORKDIR/CLAUDE.md" "$CONTEXT_FILE"
+      log "INFO" "Updated context synced back to: $CONTEXT_FILE"
+    fi
+  else
+    log "WARN" "Failed to update project context (non-blocking)"
+  fi
+fi
+
+# =============================================================================
+# Stop Dev Container (before PR creation, which uses host git/gh)
+# =============================================================================
+if [ "$USE_DEVCONTAINER" = true ] && [ -n "$CONTAINER_ID" ]; then
+  cleanup_container
+  CONTAINER_ID=""
+  trap - EXIT
+fi
+
+# =============================================================================
+# Create Pull Request (runs on host — uses host git and gh auth)
+# =============================================================================
+if [ "$SKIP_PR" = false ]; then
+  log "INFO" ""
+  log "INFO" "========================================="
+  log "INFO" "  Creating Pull Request"
+  log "INFO" "========================================="
+
+  if command -v gh &> /dev/null; then
+    set +e
+    pr_url=$(create_pull_request "$REPO_WORKDIR" "$BASE_BRANCH" "$PRD_SLUG")
+    pr_exit=$?
+    set -e
+
+    if [ $pr_exit -eq 0 ]; then
+      log "INFO" "Pull Request created successfully!"
+      log "INFO" "PR URL: $pr_url"
+    else
+      log "ERROR" "Failed to create Pull Request. You can create it manually from branch: $FEATURE_BRANCH"
+    fi
+  else
+    log "WARN" "GitHub CLI not found. Push branch manually:"
+    log "WARN" "  cd $REPO_WORKDIR && git push -u origin $FEATURE_BRANCH"
+  fi
+else
+  log "INFO" "Skipping PR creation (--skip-pr flag)"
+  log "INFO" "Branch $FEATURE_BRANCH is ready at $REPO_WORKDIR"
+fi
+
+# --- Summary ---
+log "INFO" ""
+log "INFO" "========================================="
+log "INFO" "  Pipeline Complete"
+log "INFO" "========================================="
+log "INFO" "Repository: $REPO_WORKDIR"
+log "INFO" "Branch:     $FEATURE_BRANCH"
+log "INFO" "Agents run: $AGENTS"
+log "INFO" ""
+
+for agent in "${AGENT_LIST[@]}"; do
+  agent=$(echo "$agent" | xargs)
+  status=$(get_agent_status "$REPO_WORKDIR" "$agent")
+  log "INFO" "  $agent: $status"
+done
+
+log "INFO" ""
+log "INFO" "Logs:     $LOG_DIR/"
+log "INFO" "Progress: $REPO_WORKDIR/$PROGRESS_DIR/"
+log "INFO" "========================================="

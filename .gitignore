@@ -1,0 +1,28 @@
+# Environment
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+
+# Working directories
+/tmp/
+.agent-progress/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Node (if any tooling is added)
+node_modules/
+
+# PRDs
+prds/
+
+# Contexts
+contexts/

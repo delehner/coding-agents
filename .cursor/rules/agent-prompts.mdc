@@ -1,0 +1,33 @@
+---
+description: Conventions for writing and editing agent prompt files
+globs: agents/**/*.md
+alwaysApply: false
+---
+
+# Agent Prompt Conventions
+
+## Structure
+
+Every agent prompt file (`agents/<name>/prompt.md`) must have:
+
+1. **Role header** — `# <Name> Agent` with a one-line description
+2. **Responsibilities** — numbered list of what the agent does
+3. **Output Artifacts** — exact file paths the agent must produce (progress file + domain artifacts)
+4. **Guidelines** — behavioral rules specific to this agent
+5. **Completion Criteria** — checklist of conditions to mark `COMPLETED`
+
+## Rules
+
+- Never duplicate content from `_base-system.md` — reference it instead
+- Completion criteria must be **testable** (checkboxes, not vague goals)
+- Output artifact paths must use the `<prd-slug>` variable for namespacing
+- Progress file is always `.agent-progress/<agent-name>.md`
+- If the agent has MCP integrations (e.g., Designer → Figma), document when to use and when to skip
+
+## Adding a New Agent
+
+1. Copy an existing agent prompt as a starting point
+2. Define clear boundaries — what this agent does and does NOT do
+3. Specify which prior agents' output it reads
+4. Register it in `pipeline/run-pipeline.sh` default `AGENTS` variable
+5. Create a matching Cursor skill in `skills/<name>/SKILL.md`

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://docs.claude.com/schemas/claude-code-settings.json",
+  "_comment": "Copy relevant settings to ~/.claude/settings.json or project .claude/settings.json",
+  "model": "claude-opus-4-6",
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Write",
+      "Read",
+      "Bash",
+      "MultiEdit"
+    ]
+  },
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "notion": {
+      "type": "http",
+      "url": "https://mcp.notion.com/mcp"
+    },
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp"
+    }
+  }
+}

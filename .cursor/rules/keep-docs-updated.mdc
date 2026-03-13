@@ -1,0 +1,33 @@
+---
+description: Enforce documentation updates whenever repo structure or behavior changes
+alwaysApply: true
+---
+
+# Keep Documentation Updated
+
+When making changes to this repository, you MUST update the relevant documentation in `docs/` and root-level files. Documentation that falls out of sync is worse than no documentation.
+
+## What Triggers a Docs Update
+
+| Change | Files to Update |
+|--------|----------------|
+| Add/remove/rename an agent | `docs/pipeline-overview.md` (flow diagrams), `docs/adding-agents.md`, `docs/project-structure.md`, `README.md` (agent table), `CLAUDE.md` |
+| Change pipeline flow or orchestrator logic | `docs/pipeline-overview.md`, `docs/ralph-loop.md` |
+| Change prompt assembly or Ralph Loop mechanics | `docs/ralph-loop.md` |
+| Add/remove MCP servers | `docs/mcp-integrations.md`, `README.md` (setup section) |
+| Add/remove/rename files or directories | `docs/project-structure.md` |
+| Change environment variables | `.env.example`, `docs/project-structure.md` (file reference table) |
+| Change dev container setup | `docs/project-structure.md` |
+| Add/modify Cursor skills | `docs/project-structure.md` |
+
+## Mermaid Diagrams
+
+The docs use Mermaid diagrams extensively. When updating flow or structure, update the corresponding diagram — don't just change the prose.
+
+## Checklist
+
+Before considering a change complete, verify:
+- [ ] All Mermaid diagrams still reflect the actual system behavior
+- [ ] The file reference table in `docs/project-structure.md` is accurate
+- [ ] `README.md` matches the current setup and usage instructions
+- [ ] `CLAUDE.md` matches the current project structure

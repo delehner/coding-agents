@@ -1,0 +1,37 @@
+---
+description: Project overview and architecture for the Coding Agents Pipeline
+alwaysApply: true
+---
+
+# Coding Agents Pipeline
+
+AI agent pipeline that turns PRDs into Pull Requests using Claude Code, Ralph Loops, and Dev Containers.
+
+## Structure
+
+- `pipeline/orchestrator.sh` — Batch dispatcher: N PRDs × N repos, parallel execution
+- `pipeline/run-pipeline.sh` — Single PRD × single repo: agent sequence, git, PR
+- `pipeline/run-agent.sh` — Ralph Loop wrapper for one agent
+- `pipeline/lib/` — Shared utilities (prd-parser, progress, git-utils, validation)
+- `agents/` — Agent prompt markdown files (`_base-system.md` + per-agent `prompt.md`)
+- `templates/` — PRD (multi-repo) and project context templates
+- `skills/` — Cursor-compatible agent skills (SKILL.md format)
+- `.devcontainer/` — Dev Container config (Dockerfile, firewall, post-create hooks)
+- `config/` — Claude Code settings templates
+- `.mcp.json` — MCP server configuration (GitHub, Notion, Figma)
+
+## Pipeline Flow
+
+```
+N PRDs → orchestrator.sh → N×M work units → run-pipeline.sh → [Architect → Designer → Developer → Tester → Reviewer] → PRs
+```
+
+Each PRD defines target repos in a `## Target Repositories` table. The orchestrator dispatches one `run-pipeline.sh` per PRD×repo pair (parallel by default, max 4). Each agent runs in a Ralph Loop with filesystem-based progress tracking via `.agent-progress/*.md`.
+
+## Key Files
+
+- `agents/_base-system.md` — shared instructions inherited by ALL agents
+- `pipeline/run-agent.sh` — Ralph Loop implementation (builds prompt, runs `claude -p`, checks completion)
+- `pipeline/run-pipeline.sh` — sequences agents, manages git branches, creates PRs
+- `pipeline/orchestrator.sh` — batch dispatcher, parses PRD metadata, parallel execution
+- `pipeline/lib/prd-parser.sh` — extracts repos, status, title from PRD markdown

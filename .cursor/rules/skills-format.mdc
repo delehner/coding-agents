@@ -1,0 +1,43 @@
+---
+description: Conventions for writing Cursor-compatible agent skills
+globs: skills/**/SKILL.md
+alwaysApply: false
+---
+
+# Skill File Conventions
+
+## Required Format
+
+Every `SKILL.md` must have YAML frontmatter:
+
+```yaml
+---
+name: lowercase-with-hyphens  # max 64 chars
+description: >-
+  Third-person description of what the skill does AND when to use it.
+  Include trigger terms the agent can match against.
+---
+```
+
+## Content Rules
+
+- Keep under 500 lines (ideally under 200)
+- Include a "When to Use" section listing trigger scenarios
+- Include a "Process" section with numbered steps
+- Provide templates or checklists the agent can follow
+- Use concrete examples, not abstract descriptions
+- Don't explain things the agent already knows — focus on project-specific knowledge
+
+## Description Best Practices
+
+The description determines when Cursor activates the skill. Include both WHAT and WHEN:
+
+```yaml
+# Good
+description: >-
+  Review code for quality, security, and best practices. Use when reviewing
+  pull requests, examining code changes, or when the user asks for a code review.
+
+# Bad
+description: Helps with code stuff
+```

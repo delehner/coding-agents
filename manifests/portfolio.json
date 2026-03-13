@@ -1,0 +1,54 @@
+{
+  "name": "Portfolio Website",
+  "description": "Personal portfolio built with Next.js 15, Tailwind CSS, and MDX.",
+  "orders": [
+    {
+      "name": "1 - Foundation",
+      "description": "Project setup, design system, layout shell, hero, about, and skills sections.",
+      "prds": [
+        {
+          "prd": "./prds/01-foundation.md",
+          "repositories": [
+            {
+              "url": "https://github.com/delehner/portfolio",
+              "branch": "main",
+              "context": "./contexts/portfolio.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 - Content",
+      "description": "Projects showcase, work experience timeline, and MDX infrastructure.",
+      "prds": [
+        {
+          "prd": "./prds/02-content.md",
+          "repositories": [
+            {
+              "url": "https://github.com/delehner/portfolio",
+              "branch": "main",
+              "context": "./contexts/portfolio.md"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 - Interactivity",
+      "description": "Contact form, animations, SEO, analytics, and deployment.",
+      "prds": [
+        {
+          "prd": "./prds/03-interactivity.md",
+          "repositories": [
+            {
+              "url": "https://github.com/delehner/portfolio",
+              "branch": "main",
+              "context": "./contexts/portfolio.md"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

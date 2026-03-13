@@ -1,0 +1,220 @@
+#!/bin/bash
+set -euo pipefail
+
+# =============================================================================
+# run-agent.sh — Ralph Loop wrapper for a single agent
+# =============================================================================
+# Runs a Claude Code agent in a Ralph Loop: iteratively re-prompts with fresh
+# context until the agent marks itself COMPLETED or max iterations are reached.
+#
+# Usage:
+#   ./pipeline/run-agent.sh \
+#     --agent <architect|designer|developer|tester|reviewer> \
+#     --workdir <path-to-repo> \
+#     --prd <path-to-prd> \
+#     [--max-iterations <n>] \
+#     [--model <model-name>] \
+#     [--previous-agents <comma-separated>]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PIPELINE_DIR="$SCRIPT_DIR"
+
+source "$PIPELINE_DIR/lib/progress.sh"
+source "$PIPELINE_DIR/lib/validation.sh"
+
+# --- Logging ---
+LOG_LEVEL="${LOG_LEVEL:-info}"
+LOG_DIR="${LOG_DIR:-./logs}"
+
+log() {
+  local level="$1"
+  local msg="$2"
+  local timestamp
+  timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  echo "[$timestamp] [$level] $msg" >&2
+
+  mkdir -p "$LOG_DIR"
+  echo "[$timestamp] [$level] $msg" >> "$LOG_DIR/pipeline.log"
+}
+
+# --- Argument Parsing ---
+AGENT=""
+WORKDIR=""
+PRD_FILE=""
+MAX_ITERATIONS="${PIPELINE_MAX_ITERATIONS:-10}"
+MODEL="${CLAUDE_MODEL:-claude-opus-4-6}"
+PREVIOUS_AGENTS=""
+ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-Edit,Write,Bash,Read,MultiEdit}"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --agent) AGENT="$2"; shift 2 ;;
+    --workdir) WORKDIR="$2"; shift 2 ;;
+    --prd) PRD_FILE="$2"; shift 2 ;;
+    --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --previous-agents) PREVIOUS_AGENTS="$2"; shift 2 ;;
+    --allowed-tools) ALLOWED_TOOLS="$2"; shift 2 ;;
+    *) log "ERROR" "Unknown argument: $1"; exit 1 ;;
+  esac
+done
+
+if [ -z "$AGENT" ] || [ -z "$WORKDIR" ] || [ -z "$PRD_FILE" ]; then
+  echo "Usage: $0 --agent <name> --workdir <path> --prd <path> [--max-iterations <n>] [--model <name>] [--previous-agents <a,b,c>]"
+  exit 1
+fi
+
+# --- Resolve Paths ---
+AGENTS_DIR="$PIPELINE_DIR/../agents"
+AGENT_PROMPT_FILE="$AGENTS_DIR/$AGENT/prompt.md"
+BASE_SYSTEM_FILE="$AGENTS_DIR/_base-system.md"
+
+if [ ! -f "$AGENT_PROMPT_FILE" ]; then
+  log "ERROR" "Agent prompt not found: $AGENT_PROMPT_FILE"
+  exit 1
+fi
+
+# Check for agent-specific iteration override
+AGENT_UPPER=$(echo "$AGENT" | tr '[:lower:]' '[:upper:]')
+AGENT_MAX_VAR="${AGENT_UPPER}_MAX_ITERATIONS"
+if [ -n "${!AGENT_MAX_VAR:-}" ]; then
+  MAX_ITERATIONS="${!AGENT_MAX_VAR}"
+  log "INFO" "Using agent-specific max iterations: $MAX_ITERATIONS"
+fi
+
+# --- Build the Prompt ---
+build_prompt() {
+  local iteration="$1"
+  local prompt=""
+
+  # Base system instructions
+  prompt+="$(cat "$BASE_SYSTEM_FILE")\n\n"
+
+  # Agent-specific prompt
+  prompt+="$(cat "$AGENT_PROMPT_FILE")\n\n"
+
+  # PRD content
+  prompt+="# PRD (Product Requirements Document)\n\n"
+  prompt+="$(cat "$PRD_FILE")\n\n"
+
+  # Previous agents' progress
+  if [ -n "$PREVIOUS_AGENTS" ]; then
+    IFS=',' read -ra PREV_AGENTS <<< "$PREVIOUS_AGENTS"
+    local prev_context
+    prev_context=$(get_previous_agents_context "$WORKDIR" "${PREV_AGENTS[@]}")
+    if [ -n "$prev_context" ]; then
+      prompt+="# Context from Previous Agents\n\n"
+      prompt+="$prev_context\n\n"
+    fi
+  fi
+
+  # Current agent's own progress (from previous iterations)
+  local own_progress="$WORKDIR/$PROGRESS_DIR/$AGENT.md"
+  if [ -f "$own_progress" ]; then
+    prompt+="# Your Progress from Previous Iterations\n\n"
+    prompt+="$(cat "$own_progress")\n\n"
+    prompt+="Continue where you left off. Check what's already done and work on the next incomplete task.\n\n"
+  fi
+
+  # Architecture docs (if they exist and this isn't the architect)
+  if [ "$AGENT" != "architect" ]; then
+    for doc in "$WORKDIR"/docs/architecture/*/architecture.md; do
+      if [ -f "$doc" ]; then
+        prompt+="# Architecture Document\n\n$(cat "$doc")\n\n"
+        break
+      fi
+    done
+  fi
+
+  # Design docs (if they exist and this isn't the architect or designer)
+  if [ "$AGENT" != "architect" ] && [ "$AGENT" != "designer" ]; then
+    for doc in "$WORKDIR"/docs/architecture/*/design.md; do
+      if [ -f "$doc" ]; then
+        prompt+="# Design Document\n\n$(cat "$doc")\n\n"
+        break
+      fi
+    done
+  fi
+
+  # Project-level CLAUDE.md (if it exists in the target repo)
+  if [ -f "$WORKDIR/CLAUDE.md" ]; then
+    prompt+="# Project Instructions (CLAUDE.md)\n\n"
+    prompt+="$(cat "$WORKDIR/CLAUDE.md")\n\n"
+  fi
+
+  # Iteration context
+  prompt+="# Iteration Context\n\n"
+  prompt+="This is iteration $iteration of $MAX_ITERATIONS.\n"
+  prompt+="Agent: $AGENT\n"
+  prompt+="Working directory: $WORKDIR\n\n"
+
+  if [ "$iteration" -ge "$((MAX_ITERATIONS - 1))" ]; then
+    prompt+="**WARNING: This is one of your final iterations. Prioritize completing your most critical remaining tasks and ensure your progress file is up to date.**\n\n"
+  fi
+
+  echo -e "$prompt"
+}
+
+# --- Ralph Loop ---
+log "INFO" "Starting Ralph Loop for agent: $AGENT (max $MAX_ITERATIONS iterations, model: $MODEL)"
+
+init_progress_dir "$WORKDIR"
+
+for ((iteration=1; iteration<=MAX_ITERATIONS; iteration++)); do
+  log "INFO" "=== $AGENT: Iteration $iteration/$MAX_ITERATIONS ==="
+
+  # Check if already completed (from a previous iteration)
+  if is_agent_completed "$WORKDIR" "$AGENT"; then
+    log "INFO" "Agent $AGENT is already COMPLETED. Skipping remaining iterations."
+    break
+  fi
+
+  # Build the full prompt for this iteration
+  prompt=$(build_prompt "$iteration")
+
+  # Save prompt to a temp file (avoids shell escaping issues with large prompts)
+  prompt_file=$(mktemp)
+  echo -e "$prompt" > "$prompt_file"
+
+  # Run Claude Code in headless mode
+  log "INFO" "Running Claude Code (iteration $iteration)..."
+
+  set +e
+  claude -p "$(cat "$prompt_file")" \
+    --model "$MODEL" \
+    --allowedTools "$ALLOWED_TOOLS" \
+    --dangerously-skip-permissions \
+    --output-format text \
+    2>&1 | tee -a "$LOG_DIR/${AGENT}_iteration_${iteration}.log"
+  exit_code=$?
+  set -e
+
+  rm -f "$prompt_file"
+
+  if [ $exit_code -ne 0 ]; then
+    log "WARN" "Claude Code exited with code $exit_code on iteration $iteration"
+  fi
+
+  # Check completion after this iteration
+  if is_agent_completed "$WORKDIR" "$AGENT"; then
+    log "INFO" "Agent $AGENT marked COMPLETED after iteration $iteration"
+    break
+  fi
+
+  if [ "$iteration" -eq "$MAX_ITERATIONS" ]; then
+    log "WARN" "Agent $AGENT reached max iterations ($MAX_ITERATIONS) without completing"
+  fi
+
+  # Brief pause between iterations to avoid rate limiting
+  sleep 2
+done
+
+# --- Final Status ---
+final_status=$(get_agent_status "$WORKDIR" "$AGENT")
+log "INFO" "Agent $AGENT finished with status: $final_status"
+
+if [ "$final_status" = "COMPLETED" ]; then
+  exit 0
+else
+  exit 1
+fi
