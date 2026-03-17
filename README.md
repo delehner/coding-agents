@@ -19,12 +19,14 @@ flowchart LR
         Ctx["Context\nSkills"] --> Agents
         subgraph Agents["Agent Sequence"]
             direction LR
-            A["Architect"] --> Des["Designer"] --> Dev["Developer"] --> T["Tester"] --> S["SecOps"] --> I["Infra"] --> DO["DevOps"] --> R["Reviewer"]
+            A["Architect"] --> Des["Designer"] --> Mig["Migration"] --> Dev["Developer"] --> Acc["A11y"]
+            Acc --> T["Tester"] --> Perf["Perf"] --> S["SecOps"] --> Dep["Deps"]
+            Dep --> I["Infra"] --> DO["DevOps"] --> Rb["Rollback"] --> Doc["Docs"] --> R["Reviewer"]
         end
     end
     Order -->|"parallel\n+ per-repo context"| WU
 
-    WU --> PR["Pull\nRequests"]
+    WU -->|"rebase\n+ evidence"| PR["Pull\nRequests"]
 ```
 
 A **manifest** JSON defines the execution plan: a sequence of **orders**, each containing **PRDs** that run in parallel. Each PRD targets one or more **repositories**, each with its own branch and context skills. Every PRD x repo combination runs as an independent pipeline inside a Dev Container, with each agent operating in a Ralph Loop.
@@ -67,8 +69,23 @@ curl -fsSL ... | bash -s -- --dir ~/my-agents
 # Custom bin directory (e.g., if /usr/local/bin needs sudo)
 curl -fsSL ... | bash -s -- --bin-dir ~/.local/bin
 
+# Install from a specific branch
+curl -fsSL ... | bash -s -- --branch feature/experimental
+
 # Uninstall
 curl -fsSL ... | bash -s -- --uninstall
+```
+
+#### Install Cursor Skills
+
+After installing, you can optionally install Cursor-compatible agent skills:
+
+```bash
+# Install skills to ~/.cursor/skills/ (global)
+./scripts/install-skills.sh
+
+# Install skills to a specific project
+./scripts/install-skills.sh --project ~/my-project
 ```
 
 ### Manual Install
@@ -107,14 +124,24 @@ cp .env.example .env
 ### 2. Set Up MCP Servers
 
 ```bash
-# GitHub (required)
+# GitHub (required — used by all agents for repo context and PR creation)
 claude mcp add --transport http github https://api.githubcopilot.com/mcp/
 
-# Notion (optional)
+# Notion (optional — project docs and ticket tracking)
 claude mcp add --transport http notion https://mcp.notion.com/mcp
 
-# Figma (optional — used by the Designer agent)
+# Figma (optional — design specs, used primarily by the Designer agent)
 claude mcp add --transport http figma https://mcp.figma.com/mcp
+
+# Slack (optional — team context, notifications, decision history)
+claude mcp add --transport http slack https://mcp.slack.com/mcp
+
+# Jira (optional — issue tracking, requires env vars in .env)
+claude mcp add jira \
+  -e JIRA_URL="$JIRA_URL" \
+  -e JIRA_EMAIL="$JIRA_EMAIL" \
+  -e JIRA_API_TOKEN="$JIRA_API_TOKEN" \
+  -- npx -y @anthropic/jira-mcp
 
 # Authenticate each server
 claude  # then run /mcp inside the session
@@ -127,9 +154,11 @@ A manifest ties together PRDs, repositories, contexts, and execution order.
 ```json
 {
   "name": "My Project",
+  "description": "Platform modernization across API and web repos",
   "orders": [
     {
       "name": "1 - Foundation",
+      "description": "Core infrastructure and shared libraries",
       "prds": [
         {
           "prd": "./prds/01-setup.md",
@@ -150,11 +179,15 @@ A manifest ties together PRDs, repositories, contexts, and execution order.
 ```
 
 Key concepts:
-- **Orders** run sequentially (merge PRs from order 1 before order 2 starts)
-- **PRDs** within an order run in parallel. When multiple PRDs target the same repo, they are automatically serialized with **stacked branches** to prevent merge conflicts
+- **Orders** run sequentially — merge PRs from order N before order N+1 starts
+- **PRDs** within an order run in parallel (up to `--max-parallel`, default 4). When multiple PRDs target the same repo, they are automatically serialized into **waves** with **stacked branches** to prevent merge conflicts. Each subsequent PRD branches from the previous one's feature branch, and PRs target the previous branch, forming a merge chain
 - Each **repository** has its own context directory (or file), branch, and URL
-- Context skills are assembled into ephemeral `CLAUDE.md` — never committed to the target repo
+- **Context skills** are assembled into an ephemeral `CLAUDE.md` in the working directory — never committed to the target repo
 - **Agents** can be specified per-PRD and/or per-repo — they combine (PRD-level first, then repo-level). Omit both to use the global default
+- **Working Branch** — each PRD declares a `**Working Branch**` in its metadata (e.g. `delehner/01-foundation`). The pipeline uses it as the feature branch name, falling back to auto-generation if not specified
+- **Rebase before PR** — before creating a PR, the pipeline rebases the feature branch onto the latest target branch to reduce conflicts from cross-order drift or external changes
+- **PR Evidence** — after PR creation, agent reports (tester, performance, secops, dependency, infrastructure, devops by default) are posted as PR comments. Configurable via `EVIDENCE_AGENTS` env var or `--evidence-agents` flag
+- **Empty repos** — when the target repo has no branches, the pipeline seeds `main` with an initial commit and works directly on it. No feature branch or PR is created; the finished `main` is pushed at the end
 
 See `templates/manifest.json` for the full template and `manifests/portfolio.json` for a real example.
 
@@ -172,12 +205,38 @@ ca orchestrate --manifest ./manifests/my-project.json --order 1
 # Skip confirmation prompts between orders
 ca orchestrate --manifest ./manifests/my-project.json --auto
 
+# Limit parallelism or run sequentially
+ca orchestrate --manifest ./manifests/my-project.json --max-parallel 2
+ca orchestrate --manifest ./manifests/my-project.json --sequential
+
 # Single PRD × single repo
 ca pipeline \
   --prd ./prds/my-feature.md \
   --repo https://github.com/org/repo \
   --context ./contexts/repo
+
+# Skip PR creation (useful for testing)
+ca pipeline --prd ./prds/my-feature.md --repo <url> --context <path> --skip-pr
+
+# Run a single agent in a Ralph Loop (useful for testing prompts)
+ca run --agent developer --workdir ./my-repo --prd ./prds/my-feature.md
 ```
+
+#### Key Flags
+
+| Flag | Commands | Description |
+|------|----------|-------------|
+| `--interactive` | `orchestrate`, `pipeline` | Pause between agents and iterations for review |
+| `--follow <agent>` | `orchestrate`, `pipeline` | Focus output on a specific agent |
+| `--skip-pr` | `orchestrate`, `pipeline` | Don't create PRs (testing) |
+| `--max-parallel <n>` | `orchestrate` | Max concurrent pipelines (default: 4) |
+| `--sequential` | `orchestrate` | Run work units one at a time |
+| `--order <n>` | `orchestrate` | Run only a specific order |
+| `--auto` | `orchestrate` | Skip confirmation prompts between orders |
+| `--evidence-agents <list>` | `orchestrate`, `pipeline` | Agents whose reports are posted as PR comments |
+| `--model <name>` | `orchestrate`, `pipeline`, `run` | Override the Claude model |
+| `--max-iterations <n>` | `orchestrate`, `pipeline`, `run` | Cap Ralph Loop iterations |
+| `--workdir <path>` | `pipeline`, `run` | Working directory for cloned repos |
 
 ### Monitoring & Interaction
 
@@ -192,9 +251,11 @@ ca orchestrate --manifest ./manifests/my-project.json --follow developer
 ca monitor                                    # all logs
 ca monitor --agent developer                  # specific agent
 ca monitor --sessions                         # list resumable sessions
+ca monitor --raw                              # raw JSON event stream
 
 # Re-format a raw .jsonl log for reading
 ca logs ./logs/developer_iteration_1.jsonl
+ca logs ./logs/developer_iteration_1.jsonl --truncate 1000
 
 # Resume an agent session interactively (from session ID)
 claude --resume <session-id>
@@ -247,6 +308,7 @@ coding-agents/
 ├── manifests/                   # Manifest JSON files (orders + PRDs + repos + contexts)
 │   └── portfolio.json
 ├── prds/                        # Product Requirements Documents
+├── logs/                        # Runtime logs (.jsonl, .log, .session — gitignored)
 ├── contexts/                    # Per-repo context skill directories
 │   └── <repo-name>/            # Skills: overview.md, architecture.md, conventions.md, ...
 ├── templates/
@@ -316,12 +378,39 @@ Create a new directory under `agents/` with a `prompt.md` file following the exi
 
 ### Environment Variables
 
-See `.env.example` for all available configuration options.
-You can keep costs down with `CLAUDE_MODEL=sonnet` and optionally override specific agents (for example `REVIEWER_MODEL=opus`).
+Copy `.env.example` to `.env` and customize. Key variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | _(blank)_ | API key for pay-per-token. Leave blank for Claude Max |
+| `CLAUDE_CODE_OAUTH_TOKEN` | _(blank)_ | OAuth token for headless/container runs (`claude setup-token`) |
+| `CLAUDE_MODEL` | `sonnet` | Default model for all agents |
+| `<AGENT>_MODEL` | _(falls back to `CLAUDE_MODEL`)_ | Per-agent model override (e.g. `REVIEWER_MODEL=opus`) |
+| `PIPELINE_MAX_ITERATIONS` | `10` | Max Ralph Loop iterations per agent |
+| `<AGENT>_MAX_ITERATIONS` | _(falls back to global)_ | Per-agent iteration cap (e.g. `DEVELOPER_MAX_ITERATIONS=20`) |
+| `PIPELINE_MAX_PARALLEL` | `4` | Max concurrent PRD×repo pipelines |
+| `DEFAULT_BASE_BRANCH` | `main` | Default base branch for PRs |
+| `PIPELINE_CLEANUP` | `false` | Clean up working directory after PR creation |
+| `EVIDENCE_AGENTS` | `tester,performance,secops,dependency,infrastructure,devops` | Agents whose reports are posted as PR comments |
+| `UPDATE_PROJECT_CONTEXT` | `true` | Auto-update `CLAUDE.md` in target repo after agents |
+| `LOG_DIR` | `./logs` | Directory for log files |
+| `INTERACTIVE` | `false` | Pause between agents/iterations for review |
+
+See `.env.example` for the complete list including optional integrations (Notion, Figma, Slack, Jira).
 
 ### MCP Servers
 
-Edit `.mcp.json` to add or remove MCP server integrations. The file is committed to git so your team shares the same integrations.
+The pipeline connects to external services via MCP (Model Context Protocol). Server configs in `.mcp.json` are committed to git so your team shares the same integrations.
+
+| Server | Transport | Used By | Purpose |
+|--------|-----------|---------|---------|
+| **GitHub** (required) | HTTP | All agents | Repos, PRs, issues, code context |
+| **Notion** | HTTP | Any agent | Project docs, databases, ticket tracking |
+| **Figma** | HTTP | Designer | Design tokens, component specs, screenshots |
+| **Slack** | HTTP | Any agent | Team context, notifications, decision history |
+| **Jira** | stdio | Any agent | Issue tracking (requires `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` in `.env`) |
+
+See **[docs/mcp-integrations.md](docs/mcp-integrations.md)** for detailed setup, authentication, and how to add new servers.
 
 ## Cost Considerations
 
@@ -331,11 +420,17 @@ Ralph Loops consume API tokens per iteration. With a **Claude Max subscription**
 |-------|------------------|-----------------|
 | Architect | 2-4 | $2-8 |
 | Designer | 2-5 | $2-10 |
+| Migration | 2-4 | $2-6 |
 | Developer | 5-15 | $10-30 |
+| Accessibility | 2-4 | $2-6 |
 | Tester | 3-8 | $5-15 |
+| Performance | 2-5 | $3-8 |
 | SecOps | 2-5 | $3-8 |
+| Dependency | 2-4 | $2-6 |
 | Infrastructure | 2-4 | $2-6 |
 | DevOps | 2-4 | $2-6 |
+| Rollback | 2-4 | $2-6 |
+| Documentation | 2-4 | $2-6 |
 | Reviewer | 2-5 | $2-10 |
 
 ## License
