@@ -4,41 +4,23 @@ set -euo pipefail
 # =============================================================================
 # generate-prd.sh — PRD and manifest generator
 # =============================================================================
-# Reads a project brief and repository contexts, then uses Claude Code to
-# decompose the work into ordered PRDs and produce a pipeline manifest.
-#
-# When run without --brief, opens $EDITOR so you can describe your project
-# interactively (like git commit).
+# Prompts you to describe what you want built, then uses Claude Code with
+# repository contexts to decompose the work into ordered PRDs and a manifest.
 #
 # Usage:
-#   # Interactive — opens your editor to write the brief
 #   ./pipeline/generate-prd.sh \
-#     --output ./prds/my-app \
-#     --manifest ./manifests/my-app.json \
-#     --repo https://github.com/org/my-app --context ./contexts/my-app
-#
-#   # From a file — skips the editor
-#   ./pipeline/generate-prd.sh \
-#     --brief ./briefs/my-app.md \
 #     --output ./prds/my-app \
 #     --manifest ./manifests/my-app.json \
 #     --repo https://github.com/org/my-app --context ./contexts/my-app
 #
 # Examples:
-#   # Interactive, multi-repo
+#   # Multi-repo
 #   ./pipeline/generate-prd.sh \
 #     --output ./prds/platform \
 #     --manifest ./manifests/platform.json \
 #     --name "Platform Rebuild" \
 #     --repo https://github.com/org/api --context ./contexts/api \
 #     --repo https://github.com/org/web --context ./contexts/web --branch develop
-#
-#   # Non-interactive with a pre-written brief
-#   ./pipeline/generate-prd.sh \
-#     --brief ./briefs/platform.md \
-#     --output ./prds/platform \
-#     --manifest ./manifests/platform.json \
-#     --repo https://github.com/org/api --context ./contexts/api
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -68,7 +50,6 @@ log() {
 }
 
 # --- Argument Parsing ---
-BRIEF_FILE=""
 OUTPUT_DIR=""
 MANIFEST_PATH=""
 PROJECT_NAME=""
@@ -76,6 +57,8 @@ AUTHOR=""
 MODEL="${CLAUDE_MODEL:-sonnet}"
 MAX_ITERATIONS="${PIPELINE_MAX_ITERATIONS:-5}"
 ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-Edit,Write,Bash,Read,MultiEdit}"
+QUIET=false
+INTERACTIVE="${INTERACTIVE:-false}"
 
 REPO_URLS=()
 REPO_CONTEXTS=()
@@ -84,13 +67,15 @@ CURRENT_REPO_IDX=-1
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --brief) BRIEF_FILE="$2"; shift 2 ;;
     --output) OUTPUT_DIR="$2"; shift 2 ;;
     --manifest) MANIFEST_PATH="$2"; shift 2 ;;
     --name) PROJECT_NAME="$2"; shift 2 ;;
     --author) AUTHOR="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
     --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
+    --verbose-logs) shift ;;
+    --quiet) QUIET=true; shift ;;
+    --interactive) INTERACTIVE=true; shift ;;
     --repo)
       CURRENT_REPO_IDX=$((CURRENT_REPO_IDX + 1))
       REPO_URLS[$CURRENT_REPO_IDX]="$2"
@@ -116,20 +101,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<'HELP'
-Usage: generate-prd.sh --output <dir> --manifest <path> [--brief <file>] --repo <url> [options]
+Usage: generate-prd.sh --output <dir> --manifest <path> --repo <url> [options]
 
 Generates ordered PRDs and a pipeline manifest using Claude Code.
-
-When --brief is omitted, opens your $EDITOR so you can describe what you want
-to build interactively (like git commit). Save and close the editor to continue.
+Prompts you to describe what you want built. Type your tasks and press Enter
+twice (empty line) to submit.
 
 Required:
   --output <dir>          Directory to write generated PRD files to
   --manifest <path>       Path to write the manifest JSON file to
-
-Brief (pick one):
-  (omit --brief)          Opens $EDITOR with a template for you to fill in
-  --brief <file>          Use a pre-written brief file (skips editor)
 
 Repository specification (repeat for each repo):
   --repo <url>            Repository URL (starts a new repo entry)
@@ -137,25 +117,19 @@ Repository specification (repeat for each repo):
   --branch <name>         Base branch for the preceding --repo (default: main)
 
 Options:
-  --name <text>           Project name (default: derived from brief or output dir)
+  --name <text>           Project name (default: derived from output dir name)
   --author <slug>         Author slug for PRD metadata and branch names
                           (default: from git config user.name)
   --model <name>          Claude model to use (default: sonnet)
   --max-iterations <n>    Max Ralph Loop iterations (default: 5)
+  --quiet                 Suppress detailed streaming output (use text mode)
+  --interactive           Pause between iterations for review and course correction
 
   -h, --help              Show this help
 
 Examples:
-  # Interactive — opens editor to write brief
+  # Single repo
   ./pipeline/generate-prd.sh \
-    --output ./prds/my-app \
-    --manifest ./manifests/my-app.json \
-    --repo https://github.com/org/my-app \
-    --context ./contexts/my-app
-
-  # Non-interactive — use a pre-written brief
-  ./pipeline/generate-prd.sh \
-    --brief ./briefs/my-app.md \
     --output ./prds/my-app \
     --manifest ./manifests/my-app.json \
     --repo https://github.com/org/my-app \
@@ -187,79 +161,53 @@ if [ -z "$MANIFEST_PATH" ]; then
   exit 1
 fi
 
-# --- Interactive brief (open editor when --brief is omitted) ---
-BRIEF_CLEANUP=""
-
-if [ -z "$BRIEF_FILE" ]; then
-  if [ ! -t 0 ]; then
-    log "ERROR" "No --brief provided and stdin is not a terminal. Use --brief <file> in non-interactive mode."
-    exit 1
-  fi
-
-  EDITOR="${VISUAL:-${EDITOR:-vi}}"
-  BRIEF_TEMPLATE="$ROOT_DIR/templates/brief.md"
-  BRIEF_TMPFILE=$(mktemp "${TMPDIR:-/tmp}/brief-XXXXXX.md")
-  BRIEF_CLEANUP="$BRIEF_TMPFILE"
-
-  if [ -f "$BRIEF_TEMPLATE" ]; then
-    cp "$BRIEF_TEMPLATE" "$BRIEF_TMPFILE"
-  else
-    cat > "$BRIEF_TMPFILE" <<'TMPL'
-# Project Name
-
-## What I Want to Build
-
-Describe what you want to build here. Be as detailed or high-level as you
-like — the PRD generator will decompose this into structured PRDs.
-
-## Key Features
-
-- Feature 1
-- Feature 2
-
-## Constraints & Preferences
-
-- Any technical constraints or preferences
-
-## Out of Scope
-
-- What you don't want included
-TMPL
-  fi
-
-  echo ""
-  echo "  Opening $EDITOR to write your project brief..."
-  echo "  Fill in the template, save, and close the editor to continue."
-  echo "  (To abort, leave the file unchanged or empty.)"
-  echo ""
-
-  BRIEF_CHECKSUM_BEFORE=$(md5 -q "$BRIEF_TMPFILE" 2>/dev/null || md5sum "$BRIEF_TMPFILE" | cut -d' ' -f1)
-
-  "$EDITOR" "$BRIEF_TMPFILE"
-
-  BRIEF_CHECKSUM_AFTER=$(md5 -q "$BRIEF_TMPFILE" 2>/dev/null || md5sum "$BRIEF_TMPFILE" | cut -d' ' -f1)
-
-  if [ "$BRIEF_CHECKSUM_BEFORE" = "$BRIEF_CHECKSUM_AFTER" ]; then
-    log "ERROR" "Brief was not modified. Aborting."
-    rm -f "$BRIEF_TMPFILE"
-    exit 1
-  fi
-
-  BRIEF_CONTENT_LENGTH=$(wc -c < "$BRIEF_TMPFILE" | tr -d ' ')
-  if [ "$BRIEF_CONTENT_LENGTH" -eq 0 ]; then
-    log "ERROR" "Brief is empty. Aborting."
-    rm -f "$BRIEF_TMPFILE"
-    exit 1
-  fi
-
-  BRIEF_FILE="$BRIEF_TMPFILE"
-  log "INFO" "Brief written via editor ($BRIEF_CONTENT_LENGTH bytes)"
-else
-  if [ ! -f "$BRIEF_FILE" ]; then
-    log "ERROR" "Brief file not found: $BRIEF_FILE"
-    exit 1
-  fi
+# --- Prompt user for project description ---
+if [ ! -t 0 ]; then
+  log "ERROR" "stdin is not a terminal. This script requires interactive input."
+  exit 1
 fi
+
+INPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/prd-input-XXXXXX.md")
+
+echo ""
+echo "  What do you want to build?"
+echo "  Describe your tasks below. Press Enter twice (empty line) to submit."
+echo ""
+
+INPUT_CONTENT=""
+EMPTY_LINES=0
+
+while true; do
+  printf "  > "
+  IFS= read -r line || break
+  if [ -z "$line" ]; then
+    EMPTY_LINES=$((EMPTY_LINES + 1))
+    if [ "$EMPTY_LINES" -ge 1 ]; then
+      break
+    fi
+  else
+    EMPTY_LINES=0
+    if [ -n "$INPUT_CONTENT" ]; then
+      INPUT_CONTENT="${INPUT_CONTENT}
+${line}"
+    else
+      INPUT_CONTENT="$line"
+    fi
+  fi
+done
+
+echo ""
+
+if [ -z "$INPUT_CONTENT" ]; then
+  log "ERROR" "No tasks provided. Aborting."
+  rm -f "$INPUT_FILE"
+  exit 1
+fi
+
+echo "$INPUT_CONTENT" > "$INPUT_FILE"
+
+INPUT_LENGTH=$(wc -c < "$INPUT_FILE" | tr -d ' ')
+log "INFO" "Description captured ($INPUT_LENGTH bytes)"
 
 # --- Resolve defaults ---
 if [ -z "$AUTHOR" ]; then
@@ -267,15 +215,10 @@ if [ -z "$AUTHOR" ]; then
 fi
 
 if [ -z "$PROJECT_NAME" ]; then
-  if [ -n "$BRIEF_CLEANUP" ]; then
-    PROJECT_NAME=$(basename "$OUTPUT_DIR" | tr '-' ' ' | tr '_' ' ')
-  else
-    PROJECT_NAME=$(basename "$BRIEF_FILE" .md | tr '-' ' ' | tr '_' ' ')
-  fi
+  PROJECT_NAME=$(basename "$OUTPUT_DIR" | tr '-' ' ' | tr '_' ' ')
 fi
 
 # --- Resolve paths ---
-BRIEF_FILE=$(realpath "$BRIEF_FILE")
 
 if [[ "$OUTPUT_DIR" != /* ]]; then
   OUTPUT_DIR="$(pwd)/$OUTPUT_DIR"
@@ -295,6 +238,7 @@ fi
 AGENTS_DIR="$ROOT_DIR/agents"
 AGENT_PROMPT_FILE="$AGENTS_DIR/prd-generator/prompt.md"
 PRD_TEMPLATE_FILE="$ROOT_DIR/templates/prd.md"
+LOG_FORMATTER="$SCRIPT_DIR/lib/log-formatter.sh"
 
 if [ ! -f "$AGENT_PROMPT_FILE" ]; then
   log "ERROR" "PRD generator prompt not found: $AGENT_PROMPT_FILE"
@@ -327,7 +271,6 @@ fi
 log "INFO" "========================================="
 log "INFO" "  PRD & Manifest Generator"
 log "INFO" "========================================="
-log "INFO" "Brief:      $BRIEF_FILE"
 log "INFO" "Project:    $PROJECT_NAME"
 log "INFO" "Author:     $AUTHOR"
 log "INFO" "Output:     $OUTPUT_DIR"
@@ -344,7 +287,7 @@ if [ ${#REPO_URLS[@]} -gt 0 ]; then
     log "INFO" "  [$((i+1))] ${REPO_URLS[$i]} @ ${REPO_BRANCHES[$i]}$local_ctx"
   done
 else
-  log "INFO" "Repos:      (to be read from brief)"
+  log "INFO" "Repos:      (to be inferred from description)"
 fi
 log "INFO" "========================================="
 
@@ -361,9 +304,9 @@ build_prompt() {
   prompt+="Use this template as the structural guide for every PRD you generate:\n\n"
   prompt+="\`\`\`markdown\n$(cat "$PRD_TEMPLATE_FILE")\n\`\`\`\n\n"
 
-  # Project brief
-  prompt+="# Project Brief\n\n"
-  prompt+="$(cat "$BRIEF_FILE")\n\n"
+  # Project description (user input)
+  prompt+="# Project Description\n\n"
+  prompt+="$(cat "$INPUT_FILE")\n\n"
 
   # Repository information
   if [ ${#REPO_URLS[@]} -gt 0 ]; then
@@ -383,7 +326,7 @@ build_prompt() {
         # Use Python for portable relpath (works on macOS bash 3.2)
         local rel_ctx
         rel_ctx=$(python3 -c "import os.path; print(os.path.relpath('$ctx', '$manifest_dir_real'))")
-        prompt+="- **Context path (for manifest)**: ./$rel_ctx\n"
+        prompt+="- **Context path (for manifest)**: $rel_ctx\n"
 
         prompt+="\n### Context for $repo_name\n\n"
         if [ -d "$ctx" ]; then
@@ -401,15 +344,22 @@ build_prompt() {
   fi
 
   # Output instructions
+  local manifest_dir_real
+  manifest_dir_real=$(realpath "$MANIFEST_DIR")
+  local rel_prd_dir
+  rel_prd_dir=$(python3 -c "import os.path; print(os.path.relpath('$OUTPUT_DIR', '$manifest_dir_real'))")
+
   prompt+="# Output Configuration\n\n"
   prompt+="- **PRD output directory**: \`$OUTPUT_DIR\`\n"
+  prompt+="- **PRD directory relative to manifest**: \`$rel_prd_dir\`\n"
   prompt+="- **Manifest output path**: \`$MANIFEST_PATH\`\n"
   prompt+="- **Author slug**: \`$AUTHOR\`\n"
   prompt+="- **Project name**: \`$PROJECT_NAME\`\n"
   prompt+="- **Today's date**: $(date '+%Y-%m-%d')\n\n"
 
   prompt+="Write each PRD as a separate markdown file in the output directory.\n"
-  prompt+="Write the manifest JSON to the manifest output path.\n\n"
+  prompt+="Write the manifest JSON to the manifest output path.\n"
+  prompt+="In the manifest, PRD paths MUST be relative to the manifest file's directory. Use the relative PRD directory above to construct them (e.g. \`$rel_prd_dir/01-slug.md\`).\n\n"
 
   if [ ${#REPO_URLS[@]} -gt 0 ]; then
     prompt+="Use these exact repository URLs and branches in the manifest. "
@@ -456,14 +406,36 @@ for ((iteration=1; iteration<=MAX_ITERATIONS; iteration++)); do
   log "INFO" "Running Claude Code (iteration $iteration)..."
 
   set +e
-  claude -p "$(cat "$prompt_file")" \
-    --model "$MODEL" \
-    --allowedTools "$ALLOWED_TOOLS" \
-    --dangerously-skip-permissions \
-    --output-format text \
-    2>&1 | tee -a "$LOG_DIR/prd_generator_iteration_${iteration}.log"
-  exit_code=$?
+  if [ "$QUIET" = true ]; then
+    claude -p "$(cat "$prompt_file")" \
+      --model "$MODEL" \
+      --allowedTools "$ALLOWED_TOOLS" \
+      --dangerously-skip-permissions \
+      --output-format text \
+      2>&1 | tee -a "$LOG_DIR/prd_generator_iteration_${iteration}.log"
+    exit_code=${PIPESTATUS[0]}
+  else
+    claude -p "$(cat "$prompt_file")" \
+      --model "$MODEL" \
+      --allowedTools "$ALLOWED_TOOLS" \
+      --dangerously-skip-permissions \
+      --output-format stream-json \
+      --verbose \
+      2>&1 | "$LOG_FORMATTER" \
+        --raw-log "$LOG_DIR/prd_generator_iteration_${iteration}.jsonl" \
+      | tee -a "$LOG_DIR/prd_generator_iteration_${iteration}.log"
+    exit_code=${PIPESTATUS[0]}
+  fi
   set -e
+
+  # Extract session ID from verbose logs for potential --resume usage
+  if [ "$QUIET" != true ] && [ -f "$LOG_DIR/prd_generator_iteration_${iteration}.jsonl" ]; then
+    session_id=$(head -5 "$LOG_DIR/prd_generator_iteration_${iteration}.jsonl" | jq -r 'select(.session_id) | .session_id' 2>/dev/null | head -1)
+    if [ -n "$session_id" ] && [ "$session_id" != "null" ]; then
+      echo "$session_id" > "$LOG_DIR/prd_generator_iteration_${iteration}.session"
+      log "INFO" "Session ID: $session_id (resume with: claude --resume $session_id)"
+    fi
+  fi
 
   rm -f "$prompt_file"
 
@@ -480,25 +452,51 @@ for ((iteration=1; iteration<=MAX_ITERATIONS; iteration++)); do
     log "WARN" "PRD generator reached max iterations ($MAX_ITERATIONS) without completing"
   fi
 
+  # Interactive pause between iterations
+  if [ "$INTERACTIVE" = true ] && [ "$iteration" -lt "$MAX_ITERATIONS" ] && [ -t 0 ]; then
+    echo "" >&2
+    echo "  [prd-generator] Iteration $iteration complete." >&2
+    echo "  Options:" >&2
+    echo "    Enter     = continue to next iteration" >&2
+    echo "    s + Enter = skip remaining iterations" >&2
+    echo "    q + Enter = abort" >&2
+    if [ "$QUIET" != true ] && [ -f "$LOG_DIR/prd_generator_iteration_${iteration}.session" ]; then
+      echo "    Resume this session interactively: claude --resume $(cat "$LOG_DIR/prd_generator_iteration_${iteration}.session")" >&2
+    fi
+    echo "" >&2
+    read -r user_input
+    case "$user_input" in
+      s|S|skip)
+        log "INFO" "User skipped remaining iterations for PRD generator"
+        break
+        ;;
+      q|Q|quit|abort)
+        log "INFO" "User aborted PRD generation"
+        exit 1
+        ;;
+    esac
+  fi
+
   sleep 2
 done
 
 # --- Cleanup ---
 rm -rf "$ROOT_DIR/.agent-progress" 2>/dev/null || true
-if [ -n "$BRIEF_CLEANUP" ]; then
-  rm -f "$BRIEF_CLEANUP"
-fi
+rm -f "$INPUT_FILE"
 
 # --- Summary ---
 prd_count=$(find "$OUTPUT_DIR" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+
+DISPLAY_OUTPUT=$(python3 -c "import os.path; print(os.path.relpath('$OUTPUT_DIR'))")
+DISPLAY_MANIFEST=$(python3 -c "import os.path; print(os.path.relpath('$MANIFEST_PATH'))")
 
 log "INFO" ""
 log "INFO" "========================================="
 log "INFO" "  PRD Generation Complete"
 log "INFO" "========================================="
-log "INFO" "Output:     $OUTPUT_DIR"
+log "INFO" "Output:     $DISPLAY_OUTPUT"
 log "INFO" "PRDs:       $prd_count file(s)"
-log "INFO" "Manifest:   $MANIFEST_PATH"
+log "INFO" "Manifest:   $DISPLAY_MANIFEST"
 log "INFO" ""
 
 if [ "$prd_count" -gt 0 ]; then
@@ -514,16 +512,16 @@ fi
 
 if [ -f "$MANIFEST_PATH" ]; then
   log "INFO" ""
-  log "INFO" "Manifest written to: $MANIFEST_PATH"
+  log "INFO" "Manifest written to: $DISPLAY_MANIFEST"
 else
   log "WARN" "Manifest was not generated. Check the logs at: $LOG_DIR/"
 fi
 
 log "INFO" ""
 log "INFO" "Next steps:"
-log "INFO" "  1. Review the generated PRDs in $OUTPUT_DIR"
-log "INFO" "  2. Review the manifest at $MANIFEST_PATH"
-log "INFO" "  3. Run the pipeline: ./pipeline/orchestrator.sh --manifest $MANIFEST_PATH"
+log "INFO" "  1. Review the generated PRDs in $DISPLAY_OUTPUT"
+log "INFO" "  2. Review the manifest at $DISPLAY_MANIFEST"
+log "INFO" "  3. Run the pipeline: ca orchestrate --manifest $DISPLAY_MANIFEST"
 log "INFO" "========================================="
 
 if [ "$prd_count" -eq 0 ]; then

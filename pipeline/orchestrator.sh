@@ -56,7 +56,7 @@ REPO_OVERRIDE=""
 BRANCH_OVERRIDE=""
 CONTEXT_FILE=""
 WORK_DIR="${PIPELINE_WORK_DIR:-/tmp/coding-agents-work}"
-AGENTS="architect,designer,developer,tester,secops,infrastructure,devops,reviewer"
+AGENTS="architect,designer,migration,developer,accessibility,tester,performance,secops,dependency,infrastructure,devops,rollback,documentation,reviewer"
 SKIP_PR=false
 NO_CONTEXT_UPDATE=false
 NO_DEVCONTAINER=false
@@ -65,7 +65,7 @@ MODEL="${CLAUDE_MODEL:-sonnet}"
 MAX_ITERATIONS="${PIPELINE_MAX_ITERATIONS:-10}"
 SEQUENTIAL=false
 MAX_PARALLEL="${PIPELINE_MAX_PARALLEL:-4}"
-EVIDENCE_AGENTS="${EVIDENCE_AGENTS:-tester,secops,infrastructure,devops}"
+EVIDENCE_AGENTS="${EVIDENCE_AGENTS:-tester,performance,secops,dependency,infrastructure,devops}"
 VERBOSE_LOGS="${VERBOSE_LOGS:-false}"
 INTERACTIVE="${INTERACTIVE:-false}"
 
@@ -108,14 +108,14 @@ Legacy mode (single PRD):
   --branch <name>           Base branch (default: main)
 
 Pipeline options:
-  --agents <list>           Comma-separated agent list (default: architect,designer,developer,tester,secops,infrastructure,devops,reviewer)
+  --agents <list>           Comma-separated agent list (default: architect,designer,migration,developer,accessibility,tester,performance,secops,dependency,infrastructure,devops,rollback,documentation,reviewer)
   --skip-pr                 Don't create PRs at the end
   --no-context-update       Don't update CLAUDE.md after agents finish
   --no-devcontainer         Run agents on host instead of inside Dev Containers
   --model <name>            Claude model (default: sonnet)
   --max-iterations <n>      Per-agent iteration cap (default: 10)
   --evidence-agents <list>  Agents whose reports are posted as PR comments
-                            (default: tester,secops,infrastructure,devops)
+                            (default: tester,performance,secops,dependency,infrastructure,devops)
 
 Execution:
   --sequential              Run work units one at a time (default: parallel)
@@ -483,8 +483,8 @@ if [ -n "$MANIFEST_FILE" ]; then
     exit 1
   fi
 
-  MANIFEST_BASE=$(pwd)
   MANIFEST_FILE=$(realpath "$MANIFEST_FILE")
+  MANIFEST_BASE=$(dirname "$MANIFEST_FILE")
 
   MANIFEST_NAME=$(jq -r '.name // "Unnamed"' "$MANIFEST_FILE")
   TOTAL_ORDERS=$(jq '.orders | length' "$MANIFEST_FILE")

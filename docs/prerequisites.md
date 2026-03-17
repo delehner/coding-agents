@@ -14,9 +14,9 @@ Everything you need to run the Coding Agents pipeline.
 | **Dev Containers CLI** | Starts and manages agent containers programmatically | `npm install -g @devcontainers/cli` |
 | **GitHub CLI (`gh`)** | PR creation, repo management | `brew install gh` |
 
-> Docker and the Dev Containers CLI are required because agents run inside
-> containers by default. Pass `--no-devcontainer` to skip this and run directly
-> on the host.
+> Docker and the Dev Containers CLI are required because agents always run inside
+> containers. The `ca` CLI enforces this; `--no-devcontainer` is only available
+> when calling pipeline scripts directly for debugging.
 
 ## Recommended
 
@@ -68,6 +68,9 @@ npm install -g @anthropic-ai/claude-code @devcontainers/cli
 # Auth
 claude                              # login with Max subscription
 gh auth login                       # login to GitHub
+
+# Install the ca CLI
+curl -fsSL https://raw.githubusercontent.com/delehner/coding-agents/main/scripts/install.sh | bash
 ```
 
 ## Quick Verify
@@ -80,6 +83,7 @@ claude --version        # any version
 docker --version        # any version
 devcontainer --version  # any version
 gh --version            # any version
+ca help                 # verify ca is installed
 
 # Check Docker is running
 docker info > /dev/null 2>&1 && echo "Docker is running" || echo "Start Docker Desktop"

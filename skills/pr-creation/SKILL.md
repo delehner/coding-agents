@@ -131,7 +131,7 @@ EOF
 
 ## Evidence Comments
 
-After PR creation, the pipeline posts agent reports as PR comments for traceability. Configurable via `EVIDENCE_AGENTS` env var (default: `tester,secops,infrastructure,devops`).
+After PR creation, the pipeline posts agent reports as PR comments for traceability. Configurable via `EVIDENCE_AGENTS` env var (default: `tester,performance,secops,dependency,infrastructure,devops`).
 
 For manual evidence posting:
 

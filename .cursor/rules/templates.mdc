@@ -1,5 +1,5 @@
 ---
-description: Conventions for PRD, brief, and project context templates
+description: Conventions for PRD and project context templates
 globs: templates/**/*.md
 alwaysApply: false
 ---
@@ -12,14 +12,6 @@ alwaysApply: false
 - Every requirement needs **acceptance criteria** with checkboxes
 - The "Scope Classification" booleans (Has UI, Has API, etc.) drive which agents are relevant
 - Use `[placeholder]` syntax for fields the user fills in
-
-## Brief Template (`templates/brief.md`)
-
-Project briefs are freeform descriptions of what you want to build. `pipeline/generate-prd.sh` opens this template in the user's `$EDITOR` when run without `--brief`, letting them describe their project interactively (like `git commit`).
-
-- Keep the template concise — it's pre-filled in the editor for the user to modify
-- Target repos can be specified in the brief or via CLI `--repo` flags
-- The `--brief <file>` flag skips the editor for non-interactive / CI use
 
 ## Context Skill Template (`templates/context-skill.md`)
 

@@ -61,12 +61,12 @@ REPO_URL=""
 CONTEXT_FILE=""
 BASE_BRANCH="${DEFAULT_BASE_BRANCH:-main}"
 WORK_DIR="${PIPELINE_WORK_DIR:-/tmp/coding-agents-work}"
-AGENTS="architect,designer,developer,tester,secops,infrastructure,devops,reviewer"
+AGENTS="architect,designer,migration,developer,accessibility,tester,performance,secops,dependency,infrastructure,devops,rollback,documentation,reviewer"
 SKIP_PR=false
 MODEL="${CLAUDE_MODEL:-sonnet}"
 MAX_ITERATIONS="${PIPELINE_MAX_ITERATIONS:-10}"
 USE_DEVCONTAINER="${USE_DEVCONTAINER:-true}"
-EVIDENCE_AGENTS="${EVIDENCE_AGENTS:-tester,secops,infrastructure,devops}"
+EVIDENCE_AGENTS="${EVIDENCE_AGENTS:-tester,performance,secops,dependency,infrastructure,devops}"
 STACK_ON=""
 PIPELINE_GIT_NAME=""
 PIPELINE_GIT_EMAIL=""
@@ -100,7 +100,7 @@ Options:
   --context <path>       Project context (file or skill directory) injected as CLAUDE.md (ephemeral, never committed)
   --branch <name>        Base branch (default: main)
   --workdir <path>       Working directory for cloned repo
-  --agents <list>        Comma-separated agent list (default: architect,designer,developer,tester,secops,infrastructure,devops,reviewer)
+  --agents <list>        Comma-separated agent list (default: architect,designer,migration,developer,accessibility,tester,performance,secops,dependency,infrastructure,devops,rollback,documentation,reviewer)
   --stack-on <branch>    Stack this branch on top of another feature branch (for same-repo PRDs).
                             Creates the feature branch from <branch> tip and targets the PR at it.
   --skip-pr              Don't create a PR at the end
@@ -109,7 +109,7 @@ Options:
   --model <name>         Claude model to use (default: sonnet)
   --max-iterations <n>   Max iterations per agent (default: 10)
   --evidence-agents <list>  Comma-separated agents whose reports are posted as PR comments
-                            (default: tester,secops,infrastructure,devops)
+                            (default: tester,performance,secops,dependency,infrastructure,devops)
   --verbose-logs            Enable detailed logging (thinking, tool use, results via stream-json)
   --interactive             Pause between agents and iterations for review and course correction
 HELP
@@ -456,8 +456,8 @@ for agent in "${AGENT_LIST[@]}"; do
     log "WARN" "Agent $agent did not complete successfully (exit: $agent_exit)"
 
     case "$agent" in
-      designer)
-        log "INFO" "Designer is non-blocking — continuing pipeline"
+      designer|migration|accessibility|performance|dependency|rollback|documentation)
+        log "INFO" "$agent is non-blocking — continuing pipeline"
         ;;
       *)
         log "ERROR" "Critical agent $agent failed. Stopping pipeline."

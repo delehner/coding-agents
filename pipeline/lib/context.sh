@@ -54,7 +54,13 @@ assemble_context_skills() {
     fi
   done < <(find "$context_dir" -maxdepth 1 -name '*.md' -print0 | sort -z)
 
-  local all_files=("${ordered_files[@]}" "${remaining_files[@]}")
+  local all_files=()
+  if [ ${#ordered_files[@]} -gt 0 ]; then
+    all_files+=("${ordered_files[@]}")
+  fi
+  if [ ${#remaining_files[@]} -gt 0 ]; then
+    all_files+=("${remaining_files[@]}")
+  fi
 
   if [ ${#all_files[@]} -eq 0 ]; then
     echo "# Project Context" > "$output_file"

@@ -68,11 +68,11 @@ Rules:
 Edit `pipeline/run-pipeline.sh` and `pipeline/orchestrator.sh` — update the default `AGENTS` variable:
 
 ```bash
-# Before
-AGENTS="architect,designer,developer,tester,secops,infrastructure,devops,reviewer"
+# Current default
+AGENTS="architect,designer,migration,developer,accessibility,tester,performance,secops,dependency,infrastructure,devops,rollback,documentation,reviewer"
 
-# After (example: adding a "security" agent after tester)
-AGENTS="architect,designer,developer,tester,security,reviewer"
+# Example: adding a "compliance" agent after dependency
+AGENTS="architect,designer,migration,developer,accessibility,tester,performance,secops,dependency,compliance,infrastructure,devops,rollback,documentation,reviewer"
 ```
 
 The position determines:
@@ -122,22 +122,31 @@ Update the following files to reflect the new agent:
 - `README.md` — add to the agent roles table
 - `CLAUDE.md` — mention if it affects project structure
 
-## Example: Adding a Security Agent
+## Example: Adding a Compliance Agent
 
 ```mermaid
 flowchart LR
     A1[Architect] --> A2[Designer]
-    A2 --> A3[Developer]
-    A3 --> A4[Tester]
-    A4 --> New[🔒 Security]
-    New --> A5[Reviewer]
-    A5 --> PR[Pull Request]
+    A2 --> A3[Migration]
+    A3 --> A4[Developer]
+    A4 --> A5[Accessibility]
+    A5 --> A6[Tester]
+    A6 --> A7[Performance]
+    A7 --> A8[SecOps]
+    A8 --> A9[Dependency]
+    A9 --> New[📋 Compliance]
+    New --> A10[Infrastructure]
+    A10 --> A11[DevOps]
+    A11 --> A12[Rollback]
+    A12 --> A13[Documentation]
+    A13 --> A14[Reviewer]
+    A14 --> PR[Pull Request]
 
     style New fill:#ff9,stroke:#333
 ```
 
 This agent would:
-- Run after Tester (reads code + test results)
-- Run before Reviewer (reviewer checks security fixes)
-- Scan for vulnerabilities, check auth patterns, validate input handling
-- Produce `docs/architecture/<prd-slug>/security-report.md`
+- Run after Dependency (reads dependency and security reports)
+- Run before Infrastructure (infrastructure decisions can incorporate compliance findings)
+- Verify regulatory compliance (SOC2, HIPAA, GDPR), audit logging, data retention policies
+- Produce `docs/architecture/<prd-slug>/compliance-report.md`

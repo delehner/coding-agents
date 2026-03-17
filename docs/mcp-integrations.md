@@ -15,17 +15,20 @@ flowchart TD
         GH["GitHub MCP\napi.githubcopilot.com"]
         Notion["Notion MCP\nmcp.notion.com"]
         Figma["Figma MCP\nmcp.figma.com"]
+        Slack["Slack MCP\nmcp.slack.com"]
     end
 
     subgraph Services["External Services"]
         GHSvc["GitHub\nRepos, PRs, Issues"]
         NotionSvc["Notion\nDatabases, Pages"]
         FigmaSvc["Figma\nDesign files, Tokens"]
+        SlackSvc["Slack\nChannels, Messages, Canvases"]
     end
 
     All -->|code & PRs| GH --> GHSvc
     All -->|docs & tickets| Notion --> NotionSvc
     Designer -->|design specs| Figma --> FigmaSvc
+    All -->|notifications & context| Slack --> SlackSvc
 ```
 
 ## Server Details
@@ -47,6 +50,14 @@ flowchart TD
 - **Transport**: HTTP
 - **Used by**: Designer agent primarily
 - **Capabilities**: Extract design tokens, read component specs, capture frame screenshots, access variable collections
+
+### Slack (Optional)
+- **URL**: `https://mcp.slack.com/mcp`
+- **Transport**: HTTP (Streamable HTTP / JSON-RPC 2.0)
+- **Used by**: Any agent that needs team context, pipeline notifications, or decision history
+- **Capabilities**: Search channels/messages/files/users, send messages, read threads, create/update canvases, read user profiles
+- **Auth**: OAuth 2.0 — requires a registered Slack app with appropriate scopes. Workspace admins must approve the MCP client integration.
+- **Docs**: https://docs.slack.dev/ai/mcp-server
 
 ## Setup
 

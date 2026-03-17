@@ -34,15 +34,54 @@ A **manifest** JSON defines the execution plan: a sequence of **orders**, each c
 | Agent | Responsibility | Output |
 |-------|---------------|--------|
 | **Architect** | System design, tech decisions, file structure | `architecture.md`, dependency plan |
-| **Designer** | UI/UX specs, component design, API contracts | Design specs, component hierarchy |
+| **Designer** | UI/UX specs, component design, visual specs | Design specs, component hierarchy |
+| **Migration** | Database migration generation and validation | `migration-plan.md`, migration files |
 | **Developer** | Implementation based on architecture + design | Working code, commits |
+| **Accessibility** | WCAG audit, ARIA, keyboard nav, contrast | `accessibility-report.md`, a11y fixes |
 | **Tester** | Test strategy, test implementation, coverage | Tests, coverage reports |
+| **Performance** | Profiling, benchmarks, query and bundle analysis | `performance-report.md`, optimizations |
 | **SecOps** | Security hardening and vulnerability remediation | Security report, security fixes |
+| **Dependency** | License compliance, vulnerability and maintenance audit | `dependency-report.md`, audit results |
 | **Infrastructure** | Runtime/deployment infrastructure validation | Infrastructure plan, env contracts |
 | **DevOps** | CI/CD and release readiness automation | DevOps runbook, pipeline updates |
+| **Rollback** | Rollback procedures, feature flags, monitoring triggers | `rollback-plan.md`, rollback runbook |
+| **Documentation** | README, API docs, changelog, migration guides | `documentation-summary.md`, doc updates |
 | **Reviewer** | Code review, quality gates, final fixes | Review notes, fix commits |
 
-## Quick Start
+## Installation
+
+### Quick Install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/delehner/coding-agents/main/scripts/install.sh | bash
+```
+
+This clones the repo to `~/.coding-agents` and symlinks `ca` to `/usr/local/bin/ca` so you can run it from anywhere. Works on macOS and Linux.
+
+Options:
+
+```bash
+# Custom install directory
+curl -fsSL ... | bash -s -- --dir ~/my-agents
+
+# Custom bin directory (e.g., if /usr/local/bin needs sudo)
+curl -fsSL ... | bash -s -- --bin-dir ~/.local/bin
+
+# Uninstall
+curl -fsSL ... | bash -s -- --uninstall
+```
+
+### Manual Install
+
+```bash
+git clone https://github.com/delehner/coding-agents.git
+cd coding-agents
+chmod +x ca
+# Either symlink to PATH:
+ln -sf "$(pwd)/ca" /usr/local/bin/ca
+# Or use directly:
+./ca help
+```
 
 ### Prerequisites
 
@@ -55,11 +94,12 @@ A **manifest** JSON defines the execution plan: a sequence of **orders**, each c
 
 > See **[docs/prerequisites.md](docs/prerequisites.md)** for the full setup guide.
 
-### 1. Clone and Configure
+## Quick Start
+
+### 1. Configure
 
 ```bash
-git clone <this-repo>
-cd coding-agents
+cd ~/.coding-agents   # or wherever you installed
 cp .env.example .env
 # Edit .env with your preferences
 ```
@@ -120,18 +160,20 @@ See `templates/manifest.json` for the full template and `manifests/portfolio.jso
 
 ### 4. Run the Pipeline
 
+The `ca` CLI is the single entry point — it always enables verbose log formatting (thinking, tool calls, results) and always enforces Dev Containers.
+
 ```bash
 # Run a full manifest (orders execute sequentially, PRDs in parallel)
-./pipeline/orchestrator.sh --manifest ./manifests/my-project.json
+ca orchestrate --manifest ./manifests/my-project.json
 
 # Run a specific order only
-./pipeline/orchestrator.sh --manifest ./manifests/my-project.json --order 1
+ca orchestrate --manifest ./manifests/my-project.json --order 1
 
 # Skip confirmation prompts between orders
-./pipeline/orchestrator.sh --manifest ./manifests/my-project.json --auto
+ca orchestrate --manifest ./manifests/my-project.json --auto
 
-# Single PRD × single repo (legacy, no manifest needed)
-./pipeline/run-pipeline.sh \
+# Single PRD × single repo
+ca pipeline \
   --prd ./prds/my-feature.md \
   --repo https://github.com/org/repo \
   --context ./contexts/repo
@@ -140,19 +182,19 @@ See `templates/manifest.json` for the full template and `manifests/portfolio.jso
 ### Monitoring & Interaction
 
 ```bash
-# Verbose logs: see agent thinking, tool calls, and results in real-time
-./pipeline/orchestrator.sh --manifest ./manifests/my-project.json --verbose-logs
-
 # Interactive mode: pause between agents and iterations for review
-./pipeline/orchestrator.sh --manifest ./manifests/my-project.json --interactive
+ca orchestrate --manifest ./manifests/my-project.json --interactive
 
-# Both: full visibility + control
-./pipeline/orchestrator.sh --manifest ./manifests/my-project.json --verbose-logs --interactive
+# Focus on a specific agent's output
+ca orchestrate --manifest ./manifests/my-project.json --follow developer
 
 # Monitor logs from another terminal while the pipeline runs
-./pipeline/monitor.sh                           # all logs
-./pipeline/monitor.sh --agent developer         # specific agent
-./pipeline/monitor.sh --sessions                # list resumable sessions
+ca monitor                                    # all logs
+ca monitor --agent developer                  # specific agent
+ca monitor --sessions                         # list resumable sessions
+
+# Re-format a raw .jsonl log for reading
+ca logs ./logs/developer_iteration_1.jsonl
 
 # Resume an agent session interactively (from session ID)
 claude --resume <session-id>
@@ -160,23 +202,22 @@ claude --resume <session-id>
 
 ### 5. Dev Containers (Default)
 
-Agents run inside Dev Containers automatically — each PRD x repo gets its own isolated container. No extra setup beyond having Docker running.
-
-```bash
-# Skip containers for debugging
-./pipeline/orchestrator.sh --manifest ./manifests/my-project.json --no-devcontainer
-```
+Agents run inside Dev Containers automatically — each PRD x repo gets its own isolated container. No extra setup beyond having Docker running. The `ca` CLI enforces this (the `--no-devcontainer` flag is blocked).
 
 ## Project Structure
 
 ```
 coding-agents/
+├── ca                           # Unified CLI (always verbose logs, always dev containers)
+├── scripts/
+│   ├── install.sh               # curl-based installer for macOS and Linux
+│   └── install-skills.sh        # Install Cursor skills locally
 ├── pipeline/
 │   ├── orchestrator.sh          # Manifest orchestrator: orders → PRDs → repos → PRs
 │   ├── run-pipeline.sh          # Single PRD × single repo pipeline
 │   ├── run-agent.sh             # Ralph Loop wrapper for a single agent
 │   ├── generate-context.sh      # Context skill generator (analyzes repos)
-│   ├── generate-prd.sh          # PRD and manifest generator (from project briefs)
+│   ├── generate-prd.sh          # PRD and manifest generator (interactive prompt)
 │   ├── monitor.sh               # Real-time log monitor (tail, filter, session list)
 │   └── lib/
 │       ├── prd-parser.sh        # Parse PRD metadata (status, title)
@@ -189,11 +230,17 @@ coding-agents/
 │   ├── _base-system.md          # Shared base instructions for all agents
 │   ├── architect/prompt.md
 │   ├── designer/prompt.md
+│   ├── migration/prompt.md
 │   ├── developer/prompt.md
+│   ├── accessibility/prompt.md
 │   ├── tester/prompt.md
+│   ├── performance/prompt.md
 │   ├── secops/prompt.md
+│   ├── dependency/prompt.md
 │   ├── infrastructure/prompt.md
 │   ├── devops/prompt.md
+│   ├── rollback/prompt.md
+│   ├── documentation/prompt.md
 │   ├── reviewer/prompt.md
 │   ├── context-generator/prompt.md
 │   └── prd-generator/prompt.md
@@ -205,7 +252,6 @@ coding-agents/
 ├── templates/
 │   ├── manifest.json            # Manifest template
 │   ├── prd.md                   # PRD template
-│   ├── brief.md                 # Project brief template (input for PRD generation)
 │   ├── project-context.md       # Legacy single-file context template
 │   └── context-skill.md         # Context skill template (directory-based)
 ├── skills/                      # Cursor-compatible agent skills
@@ -229,28 +275,32 @@ coding-agents/
 
 ### For Personal Projects
 
-1. Generate context skills for your repo: `./pipeline/generate-context.sh --repo <path-or-url> --output ./contexts/my-repo`
+1. Generate context skills for your repo: `ca generate context --repo <path-or-url> --output ./contexts/my-repo`
 2. Review and refine the generated skills in `contexts/my-repo/`
-3. Generate PRDs and a manifest — the script opens your editor so you can describe what you want to build:
+3. Generate PRDs and a manifest — the script prompts you to describe what you want built:
    ```bash
-   ./pipeline/generate-prd.sh \
+   ca generate prd \
      --output ./prds/my-app \
      --manifest ./manifests/my-app.json \
      --repo https://github.com/org/my-repo --context ./contexts/my-repo
-   ```
-4. Review the generated PRDs and manifest, then run: `./pipeline/orchestrator.sh --manifest ./manifests/my-app.json`
 
-> You can also pass `--brief <file>` to skip the editor, or write PRDs manually using `templates/prd.md`.
+   # What do you want to build?
+   # > Fix the CI/CD pipeline, add Terraform IaC, set up monitoring
+   # >
+   ```
+4. Review the generated PRDs and manifest, then run: `ca orchestrate --manifest ./manifests/my-app.json`
+
+> You can also write PRDs manually using `templates/prd.md`.
 
 ### For Company Projects
 
 Context skills are injected as ephemeral `CLAUDE.md` that **never gets committed** to target repos.
 
-1. Generate context skills for each repo: `./pipeline/generate-context.sh --repo <url> --output ./contexts/my-repo`
+1. Generate context skills for each repo: `ca generate context --repo <url> --output ./contexts/my-repo`
 2. Review and customize the skills — add company-specific conventions, security policies, etc.
-3. Generate PRDs and manifest — the script opens your editor to describe the work:
+3. Generate PRDs and manifest — the script prompts you to describe the work:
    ```bash
-   ./pipeline/generate-prd.sh \
+   ca generate prd \
      --output ./prds/platform \
      --manifest ./manifests/platform.json \
      --repo https://github.com/org/api --context ./contexts/api \

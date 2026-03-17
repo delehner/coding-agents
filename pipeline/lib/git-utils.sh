@@ -157,7 +157,9 @@ post_pr_evidence() {
     local report_file=""
     case "$agent" in
       tester)         report_file="$workdir/docs/architecture/$prd_slug/test-report.md" ;;
+      performance)    report_file="$workdir/docs/architecture/$prd_slug/performance-report.md" ;;
       secops)         report_file="$workdir/docs/architecture/$prd_slug/security-report.md" ;;
+      dependency)     report_file="$workdir/docs/architecture/$prd_slug/dependency-report.md" ;;
       infrastructure) report_file="$workdir/docs/architecture/$prd_slug/infrastructure.md" ;;
       devops)         report_file="$workdir/docs/architecture/$prd_slug/devops.md" ;;
     esac

@@ -59,6 +59,8 @@ MAX_ITERATIONS="${PIPELINE_MAX_ITERATIONS:-5}"
 WORK_DIR="${PIPELINE_WORK_DIR:-/tmp/coding-agents-work}"
 ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-Edit,Write,Bash,Read,MultiEdit}"
 QUIET=false
+VERBOSE_LOGS="${VERBOSE_LOGS:-false}"
+INTERACTIVE="${INTERACTIVE:-false}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -68,6 +70,8 @@ while [[ $# -gt 0 ]]; do
     --max-iterations) MAX_ITERATIONS="$2"; shift 2 ;;
     --workdir) WORK_DIR="$2"; shift 2 ;;
     --quiet) QUIET=true; shift ;;
+    --verbose-logs) VERBOSE_LOGS=true; shift ;;
+    --interactive) INTERACTIVE=true; shift ;;
     -h|--help)
       cat <<'HELP'
 Usage: generate-context.sh --repo <path-or-url> --output <dir> [options]
@@ -83,6 +87,8 @@ Options:
   --max-iterations <n>    Max Ralph Loop iterations (default: 5)
   --workdir <path>        Working directory for cloned repos (default: /tmp/coding-agents-work)
   --quiet                 Suppress streaming output (only show summary)
+  --verbose-logs          Explicit verbose mode (default when not --quiet)
+  --interactive           Pause between iterations for review and course correction
 
   -h, --help              Show this help
 
@@ -254,6 +260,15 @@ for ((iteration=1; iteration<=MAX_ITERATIONS; iteration++)); do
   fi
   set -e
 
+  # Extract session ID from verbose logs for potential --resume usage
+  if [ "$QUIET" != true ] && [ -f "$LOG_DIR/context_generator_iteration_${iteration}.jsonl" ]; then
+    session_id=$(head -5 "$LOG_DIR/context_generator_iteration_${iteration}.jsonl" | jq -r 'select(.session_id) | .session_id' 2>/dev/null | head -1)
+    if [ -n "$session_id" ] && [ "$session_id" != "null" ]; then
+      echo "$session_id" > "$LOG_DIR/context_generator_iteration_${iteration}.session"
+      log "INFO" "Session ID: $session_id (resume with: claude --resume $session_id)"
+    fi
+  fi
+
   rm -f "$prompt_file"
 
   if [ $exit_code -ne 0 ]; then
@@ -267,6 +282,31 @@ for ((iteration=1; iteration<=MAX_ITERATIONS; iteration++)); do
 
   if [ "$iteration" -eq "$MAX_ITERATIONS" ]; then
     log "WARN" "Context generator reached max iterations ($MAX_ITERATIONS) without completing"
+  fi
+
+  # Interactive pause between iterations
+  if [ "$INTERACTIVE" = true ] && [ "$iteration" -lt "$MAX_ITERATIONS" ] && [ -t 0 ]; then
+    echo "" >&2
+    echo "  [context-generator] Iteration $iteration complete." >&2
+    echo "  Options:" >&2
+    echo "    Enter     = continue to next iteration" >&2
+    echo "    s + Enter = skip remaining iterations" >&2
+    echo "    q + Enter = abort" >&2
+    if [ "$QUIET" != true ] && [ -f "$LOG_DIR/context_generator_iteration_${iteration}.session" ]; then
+      echo "    Resume this session interactively: claude --resume $(cat "$LOG_DIR/context_generator_iteration_${iteration}.session")" >&2
+    fi
+    echo "" >&2
+    read -r user_input
+    case "$user_input" in
+      s|S|skip)
+        log "INFO" "User skipped remaining iterations for context generator"
+        break
+        ;;
+      q|Q|quit|abort)
+        log "INFO" "User aborted context generation"
+        exit 1
+        ;;
+    esac
   fi
 
   sleep 2
@@ -300,8 +340,8 @@ fi
 log "INFO" ""
 log "INFO" "Next steps:"
 log "INFO" "  1. Review the generated skills in $OUTPUT_DIR"
-log "INFO" "  2. Reference them in your manifest: \"context\": \"$OUTPUT_DIR\""
-log "INFO" "  3. Or copy to the target repo: cp $OUTPUT_DIR/*.md /path/to/repo/.cursor/rules/"
+log "INFO" "  2. Use in a manifest: \"context\": \"$OUTPUT_DIR\""
+log "INFO" "  3. Generate PRDs: ca generate prd --output ./prds/app --manifest ./manifests/app.json --repo <url> --context $OUTPUT_DIR"
 log "INFO" "========================================="
 
 if [ "$skill_count" -eq 0 ]; then
