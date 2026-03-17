@@ -4,8 +4,27 @@ A generic, extensible AI agent pipeline that turns PRDs into Pull Requests using
 
 ## How It Works
 
-```
-Manifest → Orders (sequential) → PRDs (parallel) → Repos (per-repo context) → PRs
+```mermaid
+flowchart LR
+    M["Manifest"] --> O["Orders\n(sequential)"]
+
+    subgraph Order["Each Order"]
+        direction TB
+        P1["PRD A"] & P2["PRD B"] & P3["PRD C"]
+    end
+    O --> Order
+
+    subgraph WU["Each PRD × Repo"]
+        direction LR
+        Ctx["Context\nSkills"] --> Agents
+        subgraph Agents["Agent Sequence"]
+            direction LR
+            A["Architect"] --> Des["Designer"] --> Dev["Developer"] --> T["Tester"] --> S["SecOps"] --> I["Infra"] --> DO["DevOps"] --> R["Reviewer"]
+        end
+    end
+    Order -->|"parallel\n+ per-repo context"| WU
+
+    WU --> PR["Pull\nRequests"]
 ```
 
 A **manifest** JSON defines the execution plan: a sequence of **orders**, each containing **PRDs** that run in parallel. Each PRD targets one or more **repositories**, each with its own branch and context skills. Every PRD x repo combination runs as an independent pipeline inside a Dev Container, with each agent operating in a Ralph Loop.
