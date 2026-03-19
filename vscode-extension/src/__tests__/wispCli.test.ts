@@ -1,9 +1,12 @@
 import * as cp from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { WispCli } from '../wispCli';
 
 jest.mock('node:child_process');
 const mockExec = cp.exec as jest.MockedFunction<typeof cp.exec>;
+type ExecCallback = (error: Error | null, stdout: string, stderr: string) => void;
 
 describe('WispCli.resolve()', () => {
   beforeEach(() => {
@@ -25,8 +28,8 @@ describe('WispCli.resolve()', () => {
   });
 
   it('falls back to which/where when binaryPath setting is empty', async () => {
-    mockExec.mockImplementation((_cmd, callback: any) => {
-      callback(null, '/usr/local/bin/wisp\n', '');
+    mockExec.mockImplementation((_cmd, callback: unknown) => {
+      (callback as ExecCallback)(null, '/usr/local/bin/wisp\n', '');
       return {} as cp.ChildProcess;
     });
 
@@ -40,8 +43,8 @@ describe('WispCli.resolve()', () => {
   });
 
   it('returns null and shows install prompt when binary not found', async () => {
-    mockExec.mockImplementation((_cmd, callback: any) => {
-      callback(new Error('not found'), '', '');
+    mockExec.mockImplementation((_cmd, callback: unknown) => {
+      (callback as ExecCallback)(new Error('not found'), '', '');
       return {} as cp.ChildProcess;
     });
     (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue(undefined);
@@ -56,8 +59,8 @@ describe('WispCli.resolve()', () => {
   });
 
   it('opens install URL when user clicks Install button', async () => {
-    mockExec.mockImplementation((_cmd, callback: any) => {
-      callback(new Error('not found'), '', '');
+    mockExec.mockImplementation((_cmd, callback: unknown) => {
+      (callback as ExecCallback)(new Error('not found'), '', '');
       return {} as cp.ChildProcess;
     });
     (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue('Install');
@@ -71,8 +74,8 @@ describe('WispCli.resolve()', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
-    mockExec.mockImplementation((_cmd, callback: any) => {
-      callback(null, 'C:\\Users\\user\\wisp.exe\n', '');
+    mockExec.mockImplementation((_cmd, callback: unknown) => {
+      (callback as ExecCallback)(null, 'C:\\Users\\user\\wisp.exe\n', '');
       return {} as cp.ChildProcess;
     });
 
@@ -90,8 +93,8 @@ describe('WispCli.resolve()', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
 
-    mockExec.mockImplementation((_cmd, callback: any) => {
-      callback(null, '/usr/local/bin/wisp\n', '');
+    mockExec.mockImplementation((_cmd, callback: unknown) => {
+      (callback as ExecCallback)(null, '/usr/local/bin/wisp\n', '');
       return {} as cp.ChildProcess;
     });
 
@@ -107,8 +110,9 @@ describe('WispCli.resolve()', () => {
 });
 
 describe('package.json activationEvents', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pkg = require('../../package.json') as { activationEvents: string[] };
+  const pkg = JSON.parse(
+    readFileSync(join(__dirname, '../../package.json'), 'utf8'),
+  ) as { activationEvents: string[] };
 
   it('activates on wisp.* commands', () => {
     expect(pkg.activationEvents).toContain('onCommand:wisp.*');
