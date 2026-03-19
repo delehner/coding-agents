@@ -53,8 +53,7 @@ impl Manifest {
         let mut manifest: Self = serde_json::from_str(&content)
             .with_context(|| format!("failed to parse manifest: {}", path.display()))?;
 
-        let base_dir = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."));
+        let base_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         manifest.resolve_paths(&base_dir);
         Ok(manifest)
