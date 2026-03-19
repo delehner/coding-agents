@@ -144,13 +144,13 @@ Produce a manifest JSON file at the specified manifest path:
       "description": "[What this order accomplishes and why it comes first]",
       "prds": [
         {
-          "prd": "../relative/path/to/prd.md",
+          "prd": "./prds/<project>/01-foundation.md",
           "agents": ["architect", "developer", "tester", "documentation", "reviewer"],
           "repositories": [
             {
               "url": "https://github.com/org/repo",
               "branch": "main",
-              "context": "../relative/path/to/context"
+              "context": "./contexts/<repo>"
             }
           ]
         }
@@ -161,8 +161,8 @@ Produce a manifest JSON file at the specified manifest path:
 ```
 
 Manifest rules:
-- PRD paths must be **relative to the manifest file's directory**
-- Context paths must be **relative to the manifest file's directory**
+- PRD paths must be **relative to the project root** (e.g. `./prds/<project>/01-foundation.md`)
+- Context paths must be **relative to the project root** (e.g. `./contexts/<repo>`)
 - PRDs in the same order run in parallel — only group together PRDs that have no dependencies on each other
 - When multiple PRDs in the same order target the same repo, the pipeline auto-stacks their branches — no extra config needed
 - **Always include an `agents` array per PRD** selecting only the agents relevant to that PRD's scope. This avoids running all 14 agents when only a subset applies.

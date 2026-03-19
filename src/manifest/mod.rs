@@ -46,23 +46,21 @@ fn default_branch() -> String {
 
 impl Manifest {
     /// Load and parse a manifest JSON file. Paths within the manifest
-    /// are resolved relative to the directory containing the manifest file.
+    /// are resolved relative to the current working directory (project root).
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read manifest: {}", path.display()))?;
         let mut manifest: Self = serde_json::from_str(&content)
             .with_context(|| format!("failed to parse manifest: {}", path.display()))?;
 
-        let base_dir = path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
+        let base_dir = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."));
 
         manifest.resolve_paths(&base_dir);
         Ok(manifest)
     }
 
-    /// Resolve relative PRD and context paths against the manifest's directory.
+    /// Resolve relative PRD and context paths against the current working directory.
     fn resolve_paths(&mut self, base_dir: &Path) {
         for order in &mut self.orders {
             for prd_entry in &mut order.prds {
