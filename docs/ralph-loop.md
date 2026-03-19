@@ -72,15 +72,23 @@ The `AgentRunner::is_completed()` method in `src/pipeline/agent.rs` checks `.age
 
 ## Iteration Limits
 
-Iteration limits are resolved in `Config::max_iterations_for_agent()` (`src/config.rs`). Priority (highest wins):
+For **`wisp orchestrate`**, each pipeline run gets a default cap and optional per-agent caps from the **manifest** (`max_iterations`, `agent_max_iterations` in the manifest JSON). The runner then resolves each agent in `src/pipeline/runner.rs`:
+
+1. **Manifest** per-agent value (`agent_max_iterations.<agent>`), if set  
+2. Else **environment** per-agent override (e.g. `DEVELOPER_MAX_ITERATIONS`)  
+3. Else the manifest default **`max_iterations`**, or if the manifest omits it, **`PIPELINE_MAX_ITERATIONS` / `--max-iterations`** from config  
+
+For **`wisp pipeline`** and **`wisp run`**, only config (env + CLI flags) applies — there is no manifest.
+
+When you run **`wisp generate prd`**, Wisp rewrites the output manifest to add `max_iterations` and `agent_max_iterations` from your current `.env` / CLI so new manifests start with your local defaults; edit the JSON to tune a project without changing env vars.
 
 ```mermaid
 flowchart LR
-    A["Agent-specific env var\n(e.g., DEVELOPER_MAX_ITERATIONS=15)"]
-    B["Pipeline default\n(PIPELINE_MAX_ITERATIONS or --max-iterations)"]
-    C["Hardcoded default\n(10)"]
+    M["Manifest per-agent\n(agent_max_iterations)"]
+    E["Env per-agent\n(DEVELOPER_MAX_ITERATIONS, …)"]
+    D["Default cap\n(manifest max_iterations,\nelse PIPELINE_MAX_ITERATIONS)"]
 
-    A -->|overrides| B -->|overrides| C
+    M -->|then| E -->|then| D
 ```
 
 ## Interactive Mode
@@ -111,4 +119,4 @@ Each iteration consumes API tokens. A typical iteration uses 10K-50K input token
 | Complex agent (developer) | 5-15 | 50K-100K per iteration | $10-30 |
 | Max iterations hit | 10 | 50K per iteration | $15-25 |
 
-Set `PIPELINE_MAX_ITERATIONS` or agent-specific env vars conservatively and monitor logs to calibrate.
+Set manifest `max_iterations` / `agent_max_iterations`, or `PIPELINE_MAX_ITERATIONS` and agent-specific env vars, conservatively and monitor logs to calibrate.

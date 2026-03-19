@@ -64,7 +64,16 @@ pub async fn run(args: &OrchestrateArgs, config: &Config) -> Result<()> {
 
         info!(order = %order_name, "executing order");
 
-        execute_order(order, &global_agents, config, &*provider, args).await?;
+        execute_order(
+            order,
+            &global_agents,
+            config,
+            &*provider,
+            args,
+            manifest.pipeline_max_iterations(config),
+            &manifest.manifest_agent_max_iterations(),
+        )
+        .await?;
 
         info!(order = %order_name, "order complete");
     }
@@ -79,6 +88,8 @@ async fn execute_order(
     config: &Config,
     provider: &dyn Provider,
     args: &OrchestrateArgs,
+    pipeline_max_iterations: u32,
+    manifest_agent_max_iterations: &crate::config::AgentIterationOverrides,
 ) -> Result<()> {
     let work_units = build_work_units(order, global_agents, &args.work_dir)?;
 
@@ -98,10 +109,26 @@ async fn execute_order(
                 units = wave.len(),
                 "executing wave"
             );
-            execute_units(wave, config, provider, args).await?;
+            execute_units(
+                wave,
+                config,
+                provider,
+                args,
+                pipeline_max_iterations,
+                manifest_agent_max_iterations,
+            )
+            .await?;
         }
     } else {
-        execute_units(&work_units, config, provider, args).await?;
+        execute_units(
+            &work_units,
+            config,
+            provider,
+            args,
+            pipeline_max_iterations,
+            manifest_agent_max_iterations,
+        )
+        .await?;
     }
 
     Ok(())
@@ -213,10 +240,20 @@ async fn execute_units(
     config: &Config,
     provider: &dyn Provider,
     args: &OrchestrateArgs,
+    pipeline_max_iterations: u32,
+    manifest_agent_max_iterations: &crate::config::AgentIterationOverrides,
 ) -> Result<()> {
     if args.sequential || units.len() == 1 {
         for unit in units {
-            execute_single_unit(unit, config, provider, args).await?;
+            execute_single_unit(
+                unit,
+                config,
+                provider,
+                args,
+                pipeline_max_iterations,
+                manifest_agent_max_iterations,
+            )
+            .await?;
         }
         return Ok(());
     }
@@ -229,12 +266,15 @@ async fn execute_units(
     // need to be 'static. The provider is cheap to recreate.
     let config = Arc::new(config.clone());
 
+    let manifest_iters = manifest_agent_max_iterations.clone();
+
     for unit in units.iter().cloned() {
         let sem = semaphore.clone();
         let config = config.clone();
         let skip_pr = args.skip_pr;
         let interactive = args.interactive;
         let evidence_agents = args.evidence_agents.clone();
+        let manifest_iters = manifest_iters.clone();
         join_set.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
 
@@ -246,7 +286,8 @@ async fn execute_units(
                 base_branch: unit.branch.clone(),
                 context_path: unit.context.clone(),
                 agents: unit.agents.clone(),
-                max_iterations: config.max_iterations,
+                max_iterations: pipeline_max_iterations,
+                manifest_agent_max_iterations: manifest_iters.clone(),
                 skip_pr,
                 use_devcontainer: config.use_devcontainer,
                 interactive,
@@ -294,6 +335,8 @@ async fn execute_single_unit(
     config: &Config,
     provider: &dyn Provider,
     args: &OrchestrateArgs,
+    pipeline_max_iterations: u32,
+    manifest_agent_max_iterations: &crate::config::AgentIterationOverrides,
 ) -> Result<()> {
     info!(unit = %unit.label, "executing");
 
@@ -303,7 +346,8 @@ async fn execute_single_unit(
         base_branch: unit.branch.clone(),
         context_path: unit.context.clone(),
         agents: unit.agents.clone(),
-        max_iterations: config.max_iterations,
+        max_iterations: pipeline_max_iterations,
+        manifest_agent_max_iterations: manifest_agent_max_iterations.clone(),
         skip_pr: args.skip_pr,
         use_devcontainer: config.use_devcontainer,
         interactive: args.interactive,

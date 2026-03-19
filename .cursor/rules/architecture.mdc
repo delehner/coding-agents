@@ -17,7 +17,7 @@ alwaysApply: false
 | `src/cli.rs` | Clap derive structs — all flags and subcommand shapes live here |
 | `src/config.rs` | `.env` loading, per-agent model/iteration overrides via `dotenvy` |
 | `src/utils.rs` | `exec_streaming()`, `exec_capture()`, `command_exists()`, `slugify()` |
-| `src/manifest/mod.rs` | `Manifest`, `Order`, `PrdEntry`, `Repository` — JSON deserialization |
+| `src/manifest/mod.rs` | `Manifest`, `Order`, `PrdEntry`, `Repository`; optional `max_iterations` / `agent_max_iterations` |
 | `src/prd/mod.rs` | `Prd` struct, markdown metadata extraction (title, slug, fields) |
 | `src/provider/mod.rs` | `Provider` trait, `RunOutcome`, `RunOpts`, `create_provider()` factory |
 | `src/provider/claude.rs` | Claude Code CLI arg builder, session ID extraction from JSONL |

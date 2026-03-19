@@ -59,6 +59,7 @@ async fn main() -> Result<()> {
                 context_path: args.context.clone(),
                 agents,
                 max_iterations: args.max_iterations,
+                manifest_agent_max_iterations: Default::default(),
                 skip_pr: args.skip_pr,
                 use_devcontainer: !args.no_devcontainer && config.use_devcontainer,
                 interactive: config.interactive,
@@ -292,6 +293,8 @@ async fn run_generate_prd(args: &cli::GeneratePrdArgs, config: &Config) -> Resul
     if exit_code != 0 {
         anyhow::bail!("PRD generation failed with exit code {exit_code}");
     }
+
+    crate::manifest::inject_iteration_defaults(&args.manifest, config)?;
 
     tracing::info!("PRD generation complete");
     Ok(())

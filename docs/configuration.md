@@ -92,9 +92,18 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `AI_PROVIDER` | `claude` | `claude` or `gemini` |
 | `CLAUDE_MODEL` | `sonnet` | Default Claude model |
 | `GEMINI_MODEL` | `gemini-2.5-pro` | Default Gemini model |
-| `PIPELINE_MAX_ITERATIONS` | `10` | Max Ralph Loop iterations per agent |
+| `PIPELINE_MAX_ITERATIONS` | `2` | Default max Ralph Loop iterations per agent (when manifest has no `max_iterations`) |
 | `PIPELINE_WORK_DIR` | `/tmp/wisp-work` | Where repos are cloned |
 | `LOG_DIR` | `./logs` | Log output directory |
+
+### Manifest iteration fields (`wisp orchestrate`)
+
+Manifest JSON may include:
+
+- **`max_iterations`** (number) — default Ralph cap for that manifest’s pipelines  
+- **`agent_max_iterations`** (object) — optional per-agent caps, same keys as in `.env.example` (e.g. `"developer": 5`)  
+
+If omitted, orchestration falls back to `PIPELINE_MAX_ITERATIONS` and `wisp orchestrate --max-iterations` (both loaded into config) plus env per-agent vars. If the manifest **sets** `max_iterations`, that value is the pipeline default for orchestrate and overrides config for that manifest. After **`wisp generate prd`** completes, Wisp writes both fields into the generated manifest from your current config so you can commit tuned values with the project.
 
 ### Full reference
 

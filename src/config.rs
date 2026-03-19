@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::cli::ProviderKind;
 
 /// Resolved pipeline configuration from .env + CLI flags + env vars.
@@ -80,21 +82,36 @@ impl AgentModelOverrides {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AgentIterationOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub architect: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub designer: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub migration: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub developer: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub accessibility: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tester: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub performance: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub secops: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dependency: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub infrastructure: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub devops: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rollback: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub documentation: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reviewer: Option<u32>,
 }
 

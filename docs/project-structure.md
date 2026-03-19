@@ -149,7 +149,7 @@ flowchart LR
 | `src/cli.rs` | clap derive structs for all subcommands | Adding/removing CLI options |
 | `src/config.rs` | `.env` loading, env var resolution, defaults | Adding config options |
 | `src/utils.rs` | Shell exec helpers, path resolution, slugify | Changing utility behavior |
-| `src/manifest/mod.rs` | Manifest, Order, PrdEntry, Repository structs + serde | Changing manifest schema |
+| `src/manifest/mod.rs` | Manifest JSON (orders, PRDs, optional iteration fields), PRD-generate injection | Changing manifest schema |
 | `src/prd/mod.rs` | PRD struct, metadata extraction (title, status, branch) | Changing PRD metadata format |
 | `src/provider/mod.rs` | Provider trait | Adding providers |
 | `src/provider/claude.rs` | Claude Code CLI flags, session extraction | Changing Claude invocation |

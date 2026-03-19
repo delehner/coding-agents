@@ -174,13 +174,13 @@ Key variables:
 | `AI_PROVIDER` | `claude` | `claude` or `gemini` |
 | `CLAUDE_MODEL` | `sonnet` | Default Claude model |
 | `GEMINI_MODEL` | `gemini-2.5-pro` | Default Gemini model |
-| `PIPELINE_MAX_ITERATIONS` | `10` | Max Ralph Loop iterations per agent |
+| `PIPELINE_MAX_ITERATIONS` | `2` | Default Ralph cap when manifest has no `max_iterations` |
 | `PIPELINE_MAX_PARALLEL` | `4` | Max concurrent pipelines |
 | `PIPELINE_WORK_DIR` | `/tmp/wisp-work` | Clone directory |
 | `EVIDENCE_AGENTS` | `tester,performance,...` | Agents whose reports become PR comments |
 | `INTERACTIVE` | `false` | Pause between agents/iterations |
 
-Per-agent overrides: `ARCHITECT_MODEL`, `DEVELOPER_MAX_ITERATIONS`, etc.
+Per-agent overrides: `ARCHITECT_MODEL`, `DEVELOPER_MAX_ITERATIONS`, etc. For **`wisp orchestrate`**, prefer manifest `max_iterations` and `agent_max_iterations`; `wisp generate prd` seeds those from your `.env`.
 
 ## Project Structure
 

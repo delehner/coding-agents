@@ -19,7 +19,10 @@ pub struct PipelineRunConfig {
     pub base_branch: String,
     pub context_path: Option<PathBuf>,
     pub agents: Vec<String>,
+    /// Default Ralph cap when no per-agent override matches (from manifest + config).
     pub max_iterations: u32,
+    /// Per-agent caps from the manifest (partial); env-based overrides in [`Config`] fill gaps.
+    pub manifest_agent_max_iterations: crate::config::AgentIterationOverrides,
     pub skip_pr: bool,
     pub use_devcontainer: bool,
     pub interactive: bool,
@@ -108,9 +111,15 @@ pub async fn run(
     let mut previous_agents: Vec<String> = Vec::new();
 
     for agent_name in &run_config.agents {
-        let max_iter = config.max_iterations_for_agent(agent_name);
-        let effective_max = if max_iter > 0 {
-            max_iter
+        let from_manifest = run_config
+            .manifest_agent_max_iterations
+            .for_agent(agent_name);
+        let from_config = config.agent_max_iterations.for_agent(agent_name);
+        let resolved = from_manifest
+            .or(from_config)
+            .unwrap_or(run_config.max_iterations);
+        let effective_max = if resolved > 0 {
+            resolved
         } else {
             run_config.max_iterations
         };

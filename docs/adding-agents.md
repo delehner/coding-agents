@@ -138,6 +138,8 @@ pub struct AgentIterationOverrides {
 "compliance" => self.compliance,
 ```
 
+Manifest JSON `agent_max_iterations` uses the same key (e.g. `"compliance": 5`).
+
 3. In `Config::load()`, add the env var bindings:
 
 ```rust

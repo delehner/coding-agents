@@ -134,6 +134,8 @@ For each PRD, produce a complete markdown file following this exact structure:
 
 Produce a manifest JSON file at the specified manifest path:
 
+**Do not** add `max_iterations` or `agent_max_iterations` — the `wisp generate prd` command injects those from the user’s environment after you finish, so the manifest stays valid without you tracking iteration policy.
+
 ```json
 {
   "name": "[Project name]",

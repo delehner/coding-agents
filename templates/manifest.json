@@ -1,6 +1,10 @@
 {
   "name": "Project Name",
   "description": "Brief description of what this manifest delivers.",
+  "max_iterations": 2,
+  "agent_max_iterations": {
+    "developer": 4
+  },
   "orders": [
     {
       "name": "1 - Foundation",

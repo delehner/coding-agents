@@ -8,7 +8,7 @@ A single Rust binary (`wisp`) that turns PRDs into Pull Requests using AI coding
 - `src/main.rs` — Entry point, CLI dispatch, generator commands, install skills
 - `src/cli.rs` — Clap derive structs for all subcommands and flags
 - `src/config.rs` — `.env` loading, env var resolution, per-agent model/iteration overrides
-- `src/manifest/mod.rs` — Manifest, Order, PrdEntry, Repository structs (serde deserialization)
+- `src/manifest/mod.rs` — Manifest, Order, PrdEntry, Repository; optional `max_iterations` / `agent_max_iterations`; PRD-generate injection helper
 - `src/prd/mod.rs` — PRD struct, markdown metadata extraction (title, status, branch, priority)
 - `src/provider/` — AI provider abstraction (Provider trait, claude.rs, gemini.rs)
 - `src/pipeline/mod.rs` — Default agent ordering, blocking/non-blocking classification
