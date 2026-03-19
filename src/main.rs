@@ -257,6 +257,13 @@ async fn run_generate_context(args: &cli::GenerateContextArgs, config: &Config) 
 
     std::fs::create_dir_all(&args.output)?;
 
+    // Resolve to absolute path so the agent writes to the correct location.
+    // The agent runs with cwd = cloned repo; a relative path would be wrong.
+    let output_abs = args
+        .output
+        .canonicalize()
+        .with_context(|| format!("failed to resolve output path: {}", args.output.display()))?;
+
     let work_dir = config.work_dir.join("context-gen");
     let (workdir, _) = git::clone_or_prepare(&args.repo, &work_dir, &args.branch).await?;
 
@@ -278,7 +285,7 @@ async fn run_generate_context(args: &cli::GenerateContextArgs, config: &Config) 
     prompt.push_str(&format!(
         "\nRepository: {}\nOutput context skills to: {}\n",
         args.repo,
-        args.output.display()
+        output_abs.display()
     ));
 
     let prompt_file = std::env::temp_dir().join("wisp-generate-context-prompt.md");
