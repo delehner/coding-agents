@@ -68,7 +68,7 @@ impl<'a> AgentRunner<'a> {
             };
 
             let args = self.provider.build_run_args(&prompt_file, &opts);
-            let exit_code = self.execute_cli(agent, &args, workdir, &opts).await?;
+            let (exit_code, stderr_lines) = self.execute_cli(agent, &args, workdir, &opts).await?;
 
             // Clean up temp prompt file
             let _ = std::fs::remove_file(&prompt_file);
@@ -91,6 +91,15 @@ impl<'a> AgentRunner<'a> {
 
             if exit_code != 0 {
                 warn!(agent, exit_code, iteration, "CLI exited with non-zero code");
+                if !stderr_lines.is_empty() {
+                    let stderr_preview: String = stderr_lines.join("\n");
+                    let truncated = if stderr_preview.len() > 2000 {
+                        format!("{}... (truncated)", &stderr_preview[..2000])
+                    } else {
+                        stderr_preview
+                    };
+                    warn!(agent, stderr = %truncated, "CLI stderr");
+                }
             }
 
             if self.is_completed(agent, workdir)? {
@@ -243,7 +252,7 @@ impl<'a> AgentRunner<'a> {
         args: &[String],
         workdir: &Path,
         opts: &RunOpts,
-    ) -> Result<i32> {
+    ) -> Result<(i32, Vec<String>)> {
         use std::process::Stdio;
         use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -303,16 +312,19 @@ impl<'a> AgentRunner<'a> {
         let stderr_handle = tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
+            let mut collected = Vec::new();
             while let Ok(Some(line)) = lines.next_line().await {
                 tracing::debug!(agent = %agent_name, stderr = %line);
+                collected.push(line);
             }
+            collected
         });
 
         let status = child.wait().await?;
         let _ = stdout_handle.await;
-        let _ = stderr_handle.await;
+        let stderr_lines = stderr_handle.await.unwrap_or_default();
 
-        Ok(status.code().unwrap_or(-1))
+        Ok((status.code().unwrap_or(-1), stderr_lines))
     }
 }
 

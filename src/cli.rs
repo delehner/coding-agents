@@ -106,7 +106,7 @@ pub struct OrchestrateArgs {
     pub agents: Option<Vec<String>>,
 
     /// Max Ralph Loop iterations per agent
-    #[arg(long, env = "PIPELINE_MAX_ITERATIONS", default_value = "10")]
+    #[arg(long, env = "PIPELINE_MAX_ITERATIONS", default_value = "2")]
     pub max_iterations: u32,
 
     /// Working directory for cloned repos
@@ -166,7 +166,7 @@ pub struct PipelineArgs {
     pub agents: Option<Vec<String>>,
 
     /// Max Ralph Loop iterations per agent
-    #[arg(long, env = "PIPELINE_MAX_ITERATIONS", default_value = "10")]
+    #[arg(long, env = "PIPELINE_MAX_ITERATIONS", default_value = "2")]
     pub max_iterations: u32,
 
     /// Working directory for cloned repos
@@ -210,7 +210,7 @@ pub struct RunArgs {
     pub prd: PathBuf,
 
     /// Max Ralph Loop iterations
-    #[arg(long, env = "PIPELINE_MAX_ITERATIONS", default_value = "10")]
+    #[arg(long, env = "PIPELINE_MAX_ITERATIONS", default_value = "2")]
     pub max_iterations: u32,
 
     /// Comma-separated list of previously-run agents (for context)

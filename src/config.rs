@@ -189,7 +189,7 @@ impl Config {
             work_dir: env_opt("PIPELINE_WORK_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("/tmp/coding-agents-work")),
-            max_iterations: env_parse("PIPELINE_MAX_ITERATIONS").unwrap_or(10),
+            max_iterations: env_parse("PIPELINE_MAX_ITERATIONS").unwrap_or(2),
             max_parallel: env_parse("PIPELINE_MAX_PARALLEL").unwrap_or(4),
             default_base_branch: env_opt("DEFAULT_BASE_BRANCH").unwrap_or_else(|| "main".into()),
             use_devcontainer: env_bool("USE_DEVCONTAINER").unwrap_or(true),
