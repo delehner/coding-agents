@@ -203,9 +203,25 @@ pub async fn run(
         .stack_on
         .as_deref()
         .unwrap_or(&run_config.base_branch);
+
+    let stashed = git::stash_workspace_if_dirty(&workdir).await?;
+
     let rebased = git::rebase_onto_latest(&workdir, target).await?;
     if !rebased {
         warn!("rebase failed — creating PR without rebase");
+    }
+
+    let commits_ahead = git::commits_ahead_of_remote_branch(&workdir, target).await?;
+    if commits_ahead == 0 {
+        info!(
+            base = %target,
+            "no commits ahead of origin/{target} — skipping PR (nothing to merge)"
+        );
+        if stashed {
+            git::drop_latest_stash(&workdir).await;
+        }
+        info!("pipeline complete (no PR)");
+        return Ok(());
     }
 
     let pr_url = with_retry(3, std::time::Duration::from_secs(5), || async {
@@ -215,6 +231,10 @@ pub async fn run(
 
     // Post evidence comments
     git::post_pr_evidence(&workdir, &pr_url, &prd.slug(), &run_config.evidence_agents).await?;
+
+    if stashed {
+        git::drop_latest_stash(&workdir).await;
+    }
 
     info!(pr = %pr_url, "pipeline complete");
     Ok(())

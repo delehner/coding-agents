@@ -9,6 +9,52 @@ use crate::utils::{exec_capture, repo_name_from_url};
 
 pub use pr::{create_pull_request, post_pr_evidence};
 
+const WISP_STASH_MESSAGE: &str = "wisp: pre-rebase workspace";
+
+/// Stash uncommitted changes so `git rebase` can run (e.g. assembled context overwriting a tracked `CLAUDE.md`).
+/// Returns `true` if a stash entry was created.
+pub async fn stash_workspace_if_dirty(workdir: &Path) -> Result<bool> {
+    let (_, porcelain, _) = exec_capture("git", &["status", "--porcelain"], Some(workdir)).await?;
+    if porcelain.trim().is_empty() {
+        return Ok(false);
+    }
+    info!("stashing local changes before rebase");
+    let (code, _, stderr) = exec_capture(
+        "git",
+        &["stash", "push", "-m", WISP_STASH_MESSAGE],
+        Some(workdir),
+    )
+    .await?;
+    if code != 0 {
+        bail!("git stash failed: {stderr}");
+    }
+    Ok(true)
+}
+
+/// Drop `stash@{0}` after a matching [`stash_workspace_if_dirty`] that returned `true`.
+pub async fn drop_latest_stash(workdir: &Path) {
+    match exec_capture("git", &["stash", "drop"], Some(workdir)).await {
+        Ok((0, _, _)) => {}
+        Ok((_, _, stderr)) => warn!("git stash drop failed: {stderr}"),
+        Err(e) => warn!(error = %e, "git stash drop failed"),
+    }
+}
+
+/// Count commits reachable from `HEAD` but not from `origin/<remote_branch>`.
+/// Requires `origin/<remote_branch>` to exist (e.g. after [`rebase_onto_latest`]'s fetch).
+pub async fn commits_ahead_of_remote_branch(workdir: &Path, remote_branch: &str) -> Result<u32> {
+    let range = format!("origin/{remote_branch}..HEAD");
+    let (code, stdout, stderr) =
+        exec_capture("git", &["rev-list", "--count", &range], Some(workdir)).await?;
+    if code != 0 {
+        bail!("git rev-list failed ({range}): {stderr}");
+    }
+    stdout
+        .trim()
+        .parse::<u32>()
+        .with_context(|| format!("invalid rev-list output: {:?}", stdout.trim()))
+}
+
 /// Clone a repo or fetch latest if it already exists.
 /// Handles empty (virgin) repos by seeding an initial commit.
 /// Returns (workdir, was_empty).

@@ -16,7 +16,7 @@ A single Rust binary (`wisp`) that turns PRDs into Pull Requests using AI coding
 - `src/pipeline/runner.rs` — Single PRD x repo pipeline (clone, branch, devcontainer, agent sequence, PR)
 - `src/pipeline/agent.rs` — Ralph Loop (prompt assembly, completion detection, interactive mode)
 - `src/pipeline/devcontainer.rs` — Dev Container lifecycle with RAII cleanup (Drop impl)
-- `src/git/mod.rs` — Clone, branch, rebase, push, git excludes
+- `src/git/mod.rs` — Clone, branch, stash-before-rebase, rebase, commit-ahead check, push, git excludes
 - `src/git/pr.rs` — `gh pr create`, evidence comments
 - `src/context/mod.rs` — Skill assembly in canonical order, YAML frontmatter stripping
 - `src/logging/mod.rs` — Tracing subscriber initialization

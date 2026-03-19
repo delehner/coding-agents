@@ -159,7 +159,7 @@ flowchart LR
 | `src/pipeline/runner.rs` | Single PRD × repo pipeline | Changing pipeline flow |
 | `src/pipeline/agent.rs` | Ralph Loop (prompt assembly, completion detection) | Changing iteration logic |
 | `src/pipeline/devcontainer.rs` | Dev Container lifecycle (RAII cleanup) | Changing container behavior |
-| `src/git/mod.rs` | Clone, branch, rebase, push | Changing git workflow |
+| `src/git/mod.rs` | Clone, branch, stash-before-rebase, rebase, commit-ahead check, push | Changing git workflow |
 | `src/git/pr.rs` | `gh pr create`, evidence comments | Changing PR creation |
 | `src/context/mod.rs` | Skill assembly, frontmatter stripping | Changing context format |
 | `src/logging/mod.rs` | Tracing setup | Changing log config |

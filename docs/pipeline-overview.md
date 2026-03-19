@@ -211,11 +211,15 @@ flowchart TD
     WriteMarker --> WasEmpty{Empty\nrepo?}
     WasEmpty -->|Yes| PushMain["Push main to origin\n(no PR)"]
     WasEmpty -->|No| CreatePR{--skip-pr?}
-    CreatePR -->|No| Rebase["Rebase onto latest\ntarget branch"]
-    Rebase --> PR["Push branch and\ngh pr create\n(3 retries)"]
+    CreatePR -->|No| Stash["Stash dirty tree\nif needed"]
+    Stash --> Rebase["Rebase onto latest\ntarget branch"]
+    Rebase --> Ahead{Commits ahead\nof origin/base?}
+    Ahead -->|No| NoPR["Skip PR\n(nothing to merge)"]
+    Ahead -->|Yes| PR["Push branch and\ngh pr create\n(3 retries)"]
     PR --> Evidence["Post evidence comments\n(agent reports to PR)"]
     CreatePR -->|Yes| Done
     PushMain --> Done
+    NoPR --> Done
     Evidence --> Done([Pipeline Complete])
 ```
 
@@ -229,7 +233,7 @@ flowchart TD
 - Agent runtime logs inside containers are written under `.pipeline/logs` (excluded from git), not the target repo `logs/`.
 - Per-agent progress files are cleared at the start of each PRD run to avoid cross-PRD completion leakage.
 - Agent model is resolved per step: `<AGENT_NAME>_MODEL` override first, then provider-specific default (`CLAUDE_MODEL` or `GEMINI_MODEL`).
-- **Runtime artifact protection**: `.agent-progress/`, `logs/`, `.pipeline/`, and the ephemeral context file (`CLAUDE.md` or `GEMINI.md`) are excluded from git via `.git/info/exclude`. After each agent finishes, the pipeline scrubs these paths from the git index in case an agent committed them accidentally.
+- **Runtime artifact protection**: `.agent-progress/`, `logs/`, and `.pipeline/` are appended to `.git/info/exclude` in the clone so they stay untracked. If the repo tracks `CLAUDE.md` / `GEMINI.md` at the root, assembling context still dirties the tree; **before rebase**, any local modifications are **stashed** so `git rebase` can run, and the stash is **dropped** after a PR is created or after skipping PR when there is nothing to merge.
 - **PRD working branch**: The feature branch name is read from the PRD's `**Working Branch**` metadata field (e.g. `delehner/01-foundation`). If not declared, falls back to auto-generation from the PRD title.
 - **Feature branch start point**: New non-stacked branches are created from `origin/<base branch>` so each PRD starts cleanly from the configured base. Stacked waves still branch from the previous wave's feature branch.
 - **PR evidence comments**: After PR creation, agent reports (tester, performance, secops, dependency, infrastructure, devops) are posted as PR comments. Configurable via `--evidence-agents` or `EVIDENCE_AGENTS` env var.
