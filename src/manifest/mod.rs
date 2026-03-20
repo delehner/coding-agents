@@ -17,16 +17,18 @@ pub struct Manifest {
     /// Per-agent max iterations for this manifest (partial overrides).
     #[serde(default)]
     pub agent_max_iterations: Option<AgentIterationOverrides>,
-    pub orders: Vec<Order>,
+    #[serde(rename = "epics", alias = "orders")]
+    pub epics: Vec<Epic>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct Order {
+pub struct Epic {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    pub prds: Vec<PrdEntry>,
+    #[serde(rename = "subtasks", alias = "prds")]
+    pub subtasks: Vec<PrdEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,12 +71,12 @@ impl Manifest {
 
     /// Resolve relative PRD and context paths against the current working directory.
     fn resolve_paths(&mut self, base_dir: &Path) {
-        for order in &mut self.orders {
-            for prd_entry in &mut order.prds {
-                if prd_entry.prd.is_relative() {
-                    prd_entry.prd = base_dir.join(&prd_entry.prd);
+        for epic in &mut self.epics {
+            for subtask in &mut epic.subtasks {
+                if subtask.prd.is_relative() {
+                    subtask.prd = base_dir.join(&subtask.prd);
                 }
-                for repo in &mut prd_entry.repositories {
+                for repo in &mut subtask.repositories {
                     if let Some(ctx) = &mut repo.context {
                         if ctx.is_relative() {
                             *ctx = base_dir.join(&*ctx);
@@ -146,11 +148,21 @@ mod tests {
     fn manifest_optional_iteration_fields() {
         let json = r#"{
             "name": "T",
-            "orders": []
+            "epics": []
         }"#;
         let m: Manifest = serde_json::from_str(json).unwrap();
         assert!(m.max_iterations.is_none());
         assert!(m.agent_max_iterations.is_none());
+    }
+
+    #[test]
+    fn manifest_deserializes_legacy_orders_key() {
+        let json = r#"{
+            "name": "T",
+            "orders": []
+        }"#;
+        let m: Manifest = serde_json::from_str(json).unwrap();
+        assert!(m.epics.is_empty());
     }
 
     #[test]
@@ -159,10 +171,41 @@ mod tests {
             "name": "T",
             "max_iterations": 7,
             "agent_max_iterations": { "developer": 12 },
-            "orders": []
+            "epics": []
         }"#;
         let m: Manifest = serde_json::from_str(json).unwrap();
         assert_eq!(m.max_iterations, Some(7));
         assert_eq!(m.agent_max_iterations.as_ref().unwrap().developer, Some(12));
+    }
+
+    #[test]
+    fn epic_deserializes_subtasks_and_legacy_prds() {
+        let json = r#"{
+            "name": "M",
+            "epics": [
+                {
+                    "name": "E1",
+                    "subtasks": [
+                        { "prd": "./a.md", "repositories": [{ "url": "https://github.com/o/r" }] }
+                    ]
+                }
+            ]
+        }"#;
+        let m: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(m.epics.len(), 1);
+        assert_eq!(m.epics[0].subtasks.len(), 1);
+
+        let json_legacy = r#"{
+            "name": "M",
+            "orders": [
+                {
+                    "prds": [
+                        { "prd": "./b.md", "repositories": [{ "url": "https://github.com/o/r2" }] }
+                    ]
+                }
+            ]
+        }"#;
+        let m2: Manifest = serde_json::from_str(json_legacy).unwrap();
+        assert_eq!(m2.epics[0].subtasks.len(), 1);
     }
 }

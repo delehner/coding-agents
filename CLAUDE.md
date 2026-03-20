@@ -8,11 +8,11 @@ A single Rust binary (`wisp`) that turns PRDs into Pull Requests using AI coding
 - `src/main.rs` — Entry point, CLI dispatch, generator commands, install skills
 - `src/cli.rs` — Clap derive structs for all subcommands and flags
 - `src/config.rs` — `.env` loading, env var resolution, per-agent model/iteration overrides
-- `src/manifest/mod.rs` — Manifest, Order, PrdEntry, Repository; optional `max_iterations` / `agent_max_iterations`; PRD-generate injection helper
+- `src/manifest/mod.rs` — Manifest, Epic, PrdEntry, Repository; optional `max_iterations` / `agent_max_iterations`; PRD-generate injection helper
 - `src/prd/mod.rs` — PRD struct, markdown metadata extraction (title, status, branch, priority)
 - `src/provider/` — AI provider abstraction (Provider trait, claude.rs, gemini.rs)
 - `src/pipeline/mod.rs` — Default agent ordering, blocking/non-blocking classification
-- `src/pipeline/orchestrator.rs` — Manifest dispatch, parallel orders, sequential PRDs per order, wave stacking, shared Semaphore + JoinSet
+- `src/pipeline/orchestrator.rs` — Manifest dispatch, parallel epics (default when multiple), sequential subtasks per epic, wave stacking, shared Semaphore + JoinSet
 - `src/pipeline/runner.rs` — Single PRD x repo pipeline (clone, branch, devcontainer, agent sequence, PR)
 - `src/pipeline/agent.rs` — Ralph Loop (prompt assembly, completion detection, interactive mode)
 - `src/pipeline/devcontainer.rs` — Dev Container lifecycle with RAII cleanup (Drop impl)
@@ -36,9 +36,9 @@ A single Rust binary (`wisp`) that turns PRDs into Pull Requests using AI coding
 
 ## Key Concepts
 
-- **Manifest**: JSON file defining orders, PRDs, repos, contexts, and agent lists. Parsed with serde_json.
-- **Orders**: Execute **sequentially** by default (shared `PIPELINE_WORK_DIR` clone is unsafe for parallel orders). Use `--parallel-orders` to opt into concurrent orders. PRDs within an order execute in manifest order; repositories under the same PRD run in parallel within `--max-parallel`.
-- **Stacked branches**: Same repo multiple times in one PRD → waves. Same repo again in a later PRD in the order → stack on the previous PRD’s feature branch.
+- **Manifest**: JSON file defining epics, subtasks (PRD entries), repos, contexts, and agent lists. Parsed with serde_json. Legacy keys `orders` / `prds` are still accepted.
+- **Epics**: Execute **in parallel by default** when multiple epics run; each epic uses an isolated clone root under `{PIPELINE_WORK_DIR}/epics/{index}/`. Use `--sequential-epics` (or `--sequential`) to run epics one after another on the shared workdir. **Subtasks** within an epic run in manifest order; repositories under the same subtask run in parallel within `--max-parallel`.
+- **Stacked branches**: Same repo multiple times in one subtask → waves. Same repo again in a later subtask in the epic → stack on the previous subtask’s feature branch.
 - **AI Provider**: Supports Claude Code (`claude`) and Gemini CLI (`gemini`). Provider trait in `src/provider/mod.rs`.
 - **Per-repo context**: Directory of markdown skill files assembled into ephemeral `CLAUDE.md` or `GEMINI.md`.
 - **Ralph Loop**: Iterative agent execution in `src/pipeline/agent.rs`. Progress tracked via `.agent-progress/` files.

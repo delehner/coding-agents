@@ -25,7 +25,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run the manifest orchestrator (orders sequential by default; use --parallel-orders only if each order uses a distinct workdir/clone)
+    /// Run the manifest orchestrator (epics run in parallel by default when multiple; use --sequential-epics for one-at-a-time)
     Orchestrate(OrchestrateArgs),
 
     /// Run a single PRD x repo pipeline
@@ -81,15 +81,15 @@ pub struct OrchestrateArgs {
     #[arg(long)]
     pub manifest: PathBuf,
 
-    /// Run orders one after another and each PRD/repo pipeline strictly serial (no concurrency)
+    /// Run epics one after another and each subtask/repo pipeline strictly serial (no concurrency)
     #[arg(long)]
     pub sequential: bool,
 
-    /// Run multiple manifest orders at the same time (unsafe when orders share `PIPELINE_WORK_DIR` / the same clone)
+    /// Run manifest epics sequentially (shared `PIPELINE_WORK_DIR`). Default is parallel epics with isolated clones under `{work_dir}/epics/{index}/`
     #[arg(long)]
-    pub parallel_orders: bool,
+    pub sequential_epics: bool,
 
-    /// Max concurrent pipelines across all orders (PRDs in an order still run in manifest order)
+    /// Max concurrent pipelines across all epics (subtasks in an epic still run in manifest order)
     #[arg(long, env = "PIPELINE_MAX_PARALLEL", default_value = "4")]
     pub max_parallel: usize,
 
@@ -101,9 +101,9 @@ pub struct OrchestrateArgs {
     #[arg(long, env = "INTERACTIVE")]
     pub interactive: bool,
 
-    /// Run only a specific order number (1-based)
-    #[arg(long)]
-    pub order: Option<usize>,
+    /// Run only a specific epic (1-based)
+    #[arg(long, visible_alias = "order")]
+    pub epic: Option<usize>,
 
     /// Comma-separated agent list (overrides manifest & default)
     #[arg(long, value_delimiter = ',')]
@@ -133,6 +133,10 @@ pub struct OrchestrateArgs {
     /// Show verbose agent output (thinking, tool calls)
     #[arg(long, env = "VERBOSE_LOGS")]
     pub verbose_logs: bool,
+
+    /// Reuse one Dev Container for all agents in each pipeline (faster; default is a fresh container per agent)
+    #[arg(long, env = "WISP_REUSE_DEVCONTAINER")]
+    pub reuse_devcontainer: bool,
 }
 
 #[derive(clap::Args)]
@@ -197,6 +201,10 @@ pub struct PipelineArgs {
     /// Show verbose agent output
     #[arg(long, env = "VERBOSE_LOGS")]
     pub verbose_logs: bool,
+
+    /// Reuse one Dev Container for all agents (faster; default is a fresh container per agent)
+    #[arg(long, env = "WISP_REUSE_DEVCONTAINER")]
+    pub reuse_devcontainer: bool,
 }
 
 #[derive(clap::Args)]

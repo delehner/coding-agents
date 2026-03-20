@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use tracing::{info, warn};
 
 use crate::config::Config;
+use crate::pipeline::devcontainer::{rewrite_workspace_paths_for_container, DevContainer};
 use crate::provider::{Provider, RunOpts};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +23,8 @@ pub struct AgentRunParams<'a> {
     pub configured_max: u32,
     pub interactive: bool,
     pub log_dir: &'a Path,
+    /// When set, the provider CLI runs via `devcontainer exec` in this container.
+    pub dev_container: Option<&'a DevContainer>,
 }
 
 struct IterationMeta {
@@ -53,6 +56,7 @@ impl<'a> AgentRunner<'a> {
             configured_max,
             interactive,
             log_dir,
+            dev_container,
         } = params;
 
         let progress_dir = workdir.join(".agent-progress");
@@ -161,7 +165,9 @@ impl<'a> AgentRunner<'a> {
             };
 
             let args = self.provider.build_run_args(path_for_cli, &opts);
-            let (exit_code, stderr_lines) = self.execute_cli(agent, &args, workdir, &opts).await?;
+            let (exit_code, stderr_lines) = self
+                .execute_cli(agent, &args, workdir, &opts, dev_container)
+                .await?;
 
             if let Some(ref p) = prompt_file_opt {
                 let _ = std::fs::remove_file(p);
@@ -459,11 +465,28 @@ impl<'a> AgentRunner<'a> {
         args: &[String],
         workdir: &Path,
         opts: &RunOpts,
+        dev_container: Option<&DevContainer>,
     ) -> Result<(i32, Vec<String>)> {
         use std::process::Stdio;
         use tokio::io::{AsyncBufReadExt, BufReader};
 
         let cli = self.provider.cli_name();
+
+        if let Some(dc) = dev_container {
+            let inner_args =
+                rewrite_workspace_paths_for_container(args, workdir, dc.workspace_folder());
+            return dc
+                .exec_provider_streaming(
+                    cli,
+                    &inner_args,
+                    self.config.provider,
+                    opts.log_jsonl.clone(),
+                    opts.log_formatted.clone(),
+                )
+                .await
+                .with_context(|| format!("devcontainer exec failed for {cli}"));
+        }
+
         let mut cmd = tokio::process::Command::new(cli);
         cmd.args(args)
             .current_dir(workdir)

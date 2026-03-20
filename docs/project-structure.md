@@ -27,7 +27,7 @@ flowchart TD
     Src --> Cli["cli.rs\nclap derive structs"]
     Src --> ConfigRs["config.rs\n.env loading, env resolution"]
     Src --> Utils["utils.rs\nShell exec, path resolution, slugify"]
-    Src --> ManifestMod["manifest/mod.rs\nManifest, Order, PrdEntry, Repository"]
+    Src --> ManifestMod["manifest/mod.rs\nManifest, Epic, PrdEntry, Repository"]
     Src --> PrdMod["prd/mod.rs\nPRD struct, metadata extraction"]
     Src --> Provider["provider/\nAI provider abstraction"]
     Src --> Pipeline["pipeline/\nOrchestration, Ralph Loop, Dev Container"]
@@ -40,7 +40,7 @@ flowchart TD
     Provider --> Gemini["gemini.rs\nGemini CLI flags"]
 
     Pipeline --> PipelineMod["mod.rs\nAgent ordering, blocking"]
-    Pipeline --> Orchestrator["orchestrator.rs\nSequential orders (default),\noptional parallel orders"]
+    Pipeline --> Orchestrator["orchestrator.rs\nParallel epics (default),\noptional --sequential-epics"]
     Pipeline --> Runner["runner.rs\nSingle PRD x repo pipeline"]
     Pipeline --> Agent["agent.rs\nRalph Loop"]
     Pipeline --> Devcontainer["devcontainer.rs\nDev Container lifecycle"]
@@ -71,7 +71,7 @@ flowchart TD
 flowchart LR
     subgraph UserInput["User Input"]
         Desc["Interactive Prompt\n(describe what to build)"]
-        ManifestFile["Manifest JSON\n(orders, PRDs, repos)"]
+        ManifestFile["Manifest JSON\n(epics, subtasks, repos)"]
         EnvFile[".env config"]
     end
 
@@ -150,16 +150,16 @@ flowchart LR
 | `src/cli.rs` | clap derive structs for all subcommands | Adding/removing CLI options |
 | `src/config.rs` | `.env` loading, env var resolution, defaults | Adding config options |
 | `src/utils.rs` | Shell exec helpers, path resolution, slugify | Changing utility behavior |
-| `src/manifest/mod.rs` | Manifest JSON (orders, PRDs, optional iteration fields), PRD-generate injection | Changing manifest schema |
+| `src/manifest/mod.rs` | Manifest JSON (epics, subtasks, optional iteration fields), PRD-generate injection | Changing manifest schema |
 | `src/prd/mod.rs` | PRD struct, metadata extraction (title, status, branch) | Changing PRD metadata format |
 | `src/provider/mod.rs` | Provider trait | Adding providers |
 | `src/provider/claude.rs` | Claude Code CLI flags, session extraction | Changing Claude invocation |
 | `src/provider/gemini.rs` | Gemini CLI flags, session extraction | Changing Gemini invocation |
 | `src/pipeline/mod.rs` | Agent ordering, blocking classification | Changing agent sequence |
-| `src/pipeline/orchestrator.rs` | Sequential orders by default (`--parallel-orders` opt-in), sequential PRDs per order, wave stacking, shared concurrency cap | Changing orchestration logic |
-| `src/pipeline/runner.rs` | Single PRD × repo pipeline | Changing pipeline flow |
-| `src/pipeline/agent.rs` | Ralph Loop (prompt assembly, completion detection) | Changing iteration logic |
-| `src/pipeline/devcontainer.rs` | Dev Container lifecycle (RAII cleanup) | Changing container behavior |
+| `src/pipeline/orchestrator.rs` | Parallel epics by default (`--sequential-epics` opt-in), per-epic workdir, sequential subtasks per epic, wave stacking, shared concurrency cap | Changing orchestration logic |
+| `src/pipeline/runner.rs` | Single PRD × repo pipeline; per-agent Dev Container by default (`reuse_devcontainer` opt-in) | Changing pipeline flow |
+| `src/pipeline/agent.rs` | Ralph Loop; `devcontainer exec` for provider CLI when Dev Container enabled | Changing iteration logic |
+| `src/pipeline/devcontainer.rs` | `devcontainer up` / streaming `exec` / stop; host→container path rewrite | Changing container behavior |
 | `src/git/mod.rs` | Clone, branch, stash-before-rebase, rebase, stash pop, commit-ahead check, push | Changing git workflow |
 | `src/git/pr.rs` | `gh pr create` (validates `HEAD` vs expected feature branch, explicit `--head`), evidence comments | Changing PR creation |
 | `src/context/mod.rs` | Skill assembly, frontmatter stripping | Changing context format |
@@ -171,7 +171,7 @@ flowchart LR
 | `vscode-extension/README.md` | Local build, test, package (`.vsix`) before publish | Extension developer workflow |
 | `agents/_base-system.md` | Shared instructions for all agents | Changing universal agent behavior |
 | `agents/*/prompt.md` | Per-agent instructions and completion criteria | Modifying agent behavior |
-| `manifests/*.json` | Execution plans: orders, PRDs, repos, contexts | Adding projects or changing plans |
+| `manifests/*.json` | Execution plans: epics, subtasks, repos, contexts | Adding projects or changing plans |
 | `prds/<project>/` | Product Requirements Documents (referenced by manifests) | Adding or editing PRDs |
 | `contexts/<repo>/` | Per-repo context skill directories | Repo conventions change |
 | `templates/manifest.json` | Manifest template | Changing manifest schema |

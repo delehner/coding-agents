@@ -94,7 +94,7 @@ wisp orchestrate --manifest ./manifests/your-project.json
 
 | Command | Description |
 |---------|-------------|
-| `wisp orchestrate --manifest <path>` | Run all orders/PRDs from a manifest |
+| `wisp orchestrate --manifest <path>` | Run all epics/subtasks from a manifest |
 | `wisp pipeline --prd <path> --repo <url>` | Run a single PRD against one repo |
 | `wisp run --agent <name> --workdir <path> --prd <path>` | Run a single agent (Ralph Loop) |
 | `wisp generate prd --output <dir> --manifest <path> --repo <url> --context <path> [--description <text>]` | Generate PRDs (prompts for description or use --description) |
@@ -109,10 +109,10 @@ wisp orchestrate --manifest ./manifests/your-project.json
 ```json
 {
   "name": "My Project",
-  "orders": [
+  "epics": [
     {
       "name": "1 - Foundation",
-      "prds": [
+      "subtasks": [
         {
           "prd": "./prds/01-setup.md",
           "agents": ["architect", "designer"],
@@ -131,9 +131,9 @@ wisp orchestrate --manifest ./manifests/your-project.json
 }
 ```
 
-- **Orders** execute sequentially (merge PRs before next order)
-- **PRDs within an order** execute in manifest order (sequential); **repos** under the same PRD can run in parallel within `--max-parallel`
-- **Same-repo PRDs** auto-serialize into stacking waves
+- **Epics** run in parallel by default when multiple (isolated clones under `{work_dir}/epics/{index}/`); use `--sequential-epics` for one-at-a-time on a shared workdir
+- **Subtasks within an epic** execute in manifest order (sequential); **repos** under the same subtask can run in parallel within `--max-parallel`
+- **Same-repo subtasks** auto-serialize into stacking waves
 - **Per-unit agents** combine: PRD agents first, then repo agents
 
 ## Agent Pipeline

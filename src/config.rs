@@ -17,6 +17,8 @@ pub struct Config {
     pub max_parallel: usize,
     pub default_base_branch: String,
     pub use_devcontainer: bool,
+    /// When true, one `devcontainer up` for all agents in a pipeline (env: `WISP_REUSE_DEVCONTAINER`).
+    pub reuse_devcontainer: bool,
     pub update_project_context: bool,
     pub cleanup: bool,
     pub evidence_agents: Vec<String>,
@@ -210,6 +212,7 @@ impl Config {
             max_parallel: env_parse("PIPELINE_MAX_PARALLEL").unwrap_or(4),
             default_base_branch: env_opt("DEFAULT_BASE_BRANCH").unwrap_or_else(|| "main".into()),
             use_devcontainer: env_bool("USE_DEVCONTAINER").unwrap_or(true),
+            reuse_devcontainer: env_bool("WISP_REUSE_DEVCONTAINER").unwrap_or(false),
             update_project_context: env_bool("UPDATE_PROJECT_CONTEXT").unwrap_or(true),
             cleanup: env_bool("PIPELINE_CLEANUP").unwrap_or(false),
             evidence_agents,

@@ -25,6 +25,8 @@ pub struct PipelineRunConfig {
     pub manifest_agent_max_iterations: crate::config::AgentIterationOverrides,
     pub skip_pr: bool,
     pub use_devcontainer: bool,
+    /// One `devcontainer up` for the whole agent sequence (faster). Default off: fresh container per agent.
+    pub reuse_devcontainer: bool,
     pub interactive: bool,
     pub stack_on: Option<String>,
     pub evidence_agents: Vec<String>,
@@ -114,17 +116,23 @@ pub async fn run(
     // Without clearing, stale COMPLETED markers skip every agent (no logs, no commits, no PR).
     reset_agent_progress_for_prd(&workdir)?;
 
-    // Run agents (always stop Dev Container afterward — error paths must not skip cleanup)
-    let mut container: Option<DevContainer> = None;
-
-    if run_config.use_devcontainer {
-        container = Some(DevContainer::start(&workdir).await?);
+    // Run agents (stop reused Dev Container after the sequence; per-agent containers stop inside the loop)
+    let mut shared_container: Option<DevContainer> = None;
+    if run_config.use_devcontainer && run_config.reuse_devcontainer {
+        shared_container = Some(DevContainer::start(&workdir).await?);
     }
 
-    let agents_result =
-        run_agent_sequence(run_config, config, provider, &workdir, &pipeline_log_dir).await;
+    let agents_result = run_agent_sequence(
+        run_config,
+        config,
+        provider,
+        &workdir,
+        &pipeline_log_dir,
+        shared_container.as_ref(),
+    )
+    .await;
 
-    if let Some(mut c) = container.take() {
+    if let Some(mut c) = shared_container.take() {
         c.stop().await;
     }
 
@@ -207,6 +215,7 @@ async fn run_agent_sequence(
     provider: &dyn Provider,
     workdir: &Path,
     pipeline_log_dir: &Path,
+    shared_devcontainer: Option<&DevContainer>,
 ) -> Result<()> {
     let agent_runner = AgentRunner::new(config, provider);
     let mut previous_agents: Vec<String> = Vec::new();
@@ -227,6 +236,16 @@ async fn run_agent_sequence(
 
         info!(agent = %agent_name, "running agent");
 
+        let mut per_agent_container: Option<DevContainer> = None;
+        let dev_container: Option<&DevContainer> = if !run_config.use_devcontainer {
+            None
+        } else if run_config.reuse_devcontainer {
+            shared_devcontainer
+        } else {
+            per_agent_container = Some(DevContainer::start(workdir).await?);
+            per_agent_container.as_ref()
+        };
+
         let outcome = agent_runner
             .run(
                 agent_name,
@@ -237,9 +256,14 @@ async fn run_agent_sequence(
                     configured_max: effective_max,
                     interactive: run_config.interactive,
                     log_dir: pipeline_log_dir,
+                    dev_container,
                 },
             )
             .await;
+
+        if let Some(mut c) = per_agent_container.take() {
+            c.stop().await;
+        }
 
         match outcome {
             Ok(AgentOutcome::Completed) => {

@@ -5,11 +5,11 @@
   "agent_max_iterations": {
     "developer": 4
   },
-  "orders": [
+  "epics": [
     {
       "name": "1 - Foundation",
-      "description": "First batch — sets up the base that later orders depend on.",
-      "prds": [
+      "description": "First batch — sets up the base that later epics may depend on (merge PRs before dependent work).",
+      "subtasks": [
         {
           "prd": "./prds/01-example.md",
           "agents": ["architect", "designer"],
@@ -44,8 +44,8 @@
     },
     {
       "name": "2 - Feature Work",
-      "description": "Depends on order 1 being merged. PRDs here run in parallel.",
-      "prds": [
+      "description": "Depends on prior work being merged. This epic can run in parallel with other epics; subtasks inside it still run one after another.",
+      "subtasks": [
         {
           "prd": "./prds/03-feature.md",
           "repositories": [

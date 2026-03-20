@@ -124,27 +124,19 @@ docker info > /dev/null 2>&1 && echo "Docker is running" || echo "Start Docker D
 
 ## How Dev Containers Work in the Pipeline
 
-When you run the pipeline, each PRD × repo combination gets its own Dev Container:
+When you run the pipeline, each PRD × repo combination runs as its own pipeline. By default **each agent** gets a **fresh** Dev Container (`devcontainer up` → Ralph loop via `devcontainer exec` → stop/remove). Use `--reuse-devcontainer` or `WISP_REUSE_DEVCONTAINER=true` for one container for the whole agent sequence.
 
 ```
-Host                          Container
+Host                          Container(s)
 ─────────────────────────────────────────────
 wisp orchestrate
-  └─ wisp run (per PRD×repo)
+  └─ runner (per PRD×repo)
        ├─ git clone
-       ├─ devcontainer up ──→ Container starts
-       │                      │
-       ├─ devcontainer exec ──→ architect
-       │                        └─ claude/gemini (sandboxed)
-       ├─ devcontainer exec ──→ designer
-       ├─ devcontainer exec ──→ developer
-       ├─ devcontainer exec ──→ tester
-       ├─ devcontainer exec ──→ secops
-       ├─ devcontainer exec ──→ infrastructure
-       ├─ devcontainer exec ──→ devops
-       ├─ devcontainer exec ──→ reviewer
-       │                      │
-       ├─ docker stop ───────→ Container removed
+       ├─ per agent (default):
+       │    devcontainer up ──→ container N
+       │    devcontainer exec ──→ claude/gemini (all iterations for that agent)
+       │    docker stop/rm
+       │    (repeat for next agent)
        └─ gh pr create
 ```
 

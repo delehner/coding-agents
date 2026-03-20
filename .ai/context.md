@@ -24,13 +24,13 @@ Wisp is a single Rust binary that turns Product Requirements Documents (PRDs) in
 | `src/cli.rs` | Clap CLI definitions for all subcommands and flags |
 | `src/config.rs` | Environment variable loading and per-agent overrides |
 | `src/utils.rs` | `exec_streaming()`, `exec_capture()`, `slugify()` |
-| `src/manifest/mod.rs` | Manifest, Order, PrdEntry, Repository structs |
+| `src/manifest/mod.rs` | Manifest, Epic, PrdEntry, Repository structs |
 | `src/prd/mod.rs` | PRD struct and markdown metadata extraction |
 | `src/provider/mod.rs` | Provider trait abstracting Claude/Gemini CLIs |
 | `src/provider/claude.rs` | Claude Code CLI integration |
 | `src/provider/gemini.rs` | Gemini CLI integration |
 | `src/pipeline/mod.rs` | Agent list constants |
-| `src/pipeline/orchestrator.rs` | Manifest dispatch, wave stacking; orders sequential by default (`--parallel-orders` optional) |
+| `src/pipeline/orchestrator.rs` | Manifest dispatch, wave stacking; epics parallel by default (`--sequential-epics` optional) |
 | `src/pipeline/runner.rs` | Single PRD × repo pipeline execution |
 | `src/pipeline/agent.rs` | Ralph Loop: iterative agent execution |
 | `src/pipeline/devcontainer.rs` | Dev Container RAII lifecycle |

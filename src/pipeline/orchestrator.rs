@@ -9,7 +9,7 @@ use tracing::{error, info};
 
 use crate::cli::OrchestrateArgs;
 use crate::config::Config;
-use crate::manifest::{Manifest, Order, PrdEntry};
+use crate::manifest::{Epic, Manifest, PrdEntry};
 use crate::prd::Prd;
 use crate::provider::{self, Provider};
 use crate::utils::repo_name_from_url;
@@ -17,8 +17,8 @@ use crate::utils::repo_name_from_url;
 use super::runner::{self, PipelineRunConfig};
 use super::DEFAULT_AGENTS;
 
-/// Shared inputs for executing one manifest order (PRDs run in sequence within the order).
-struct OrderRunCtx<'a> {
+/// Shared inputs for executing one manifest epic (subtasks run in sequence within the epic).
+struct EpicRunCtx<'a> {
     global_agents: &'a [String],
     config: &'a Config,
     provider: &'a dyn Provider,
@@ -26,6 +26,8 @@ struct OrderRunCtx<'a> {
     pipeline_max_iterations: u32,
     manifest_agent_max_iterations: &'a crate::config::AgentIterationOverrides,
     global_sem: Arc<Semaphore>,
+    /// Clone root for this epic (`PIPELINE_WORK_DIR` or `{work_dir}/epics/{idx}` when epics run in parallel).
+    pipeline_work_dir: PathBuf,
 }
 
 /// A single work unit: one PRD x one repo.
@@ -46,24 +48,24 @@ pub async fn run(args: &OrchestrateArgs, config: &Config) -> Result<()> {
 
     info!(
         manifest = %manifest.display_name(),
-        orders = manifest.orders.len(),
+        epics = manifest.epics.len(),
         "starting orchestration"
     );
 
-    let order_range = match args.order {
+    let epic_range = match args.epic {
         Some(n) => {
-            if n == 0 || n > manifest.orders.len() {
+            if n == 0 || n > manifest.epics.len() {
                 anyhow::bail!(
-                    "order {n} out of range (manifest has {} orders)",
-                    manifest.orders.len()
+                    "epic {n} out of range (manifest has {} epics)",
+                    manifest.epics.len()
                 );
             }
             (n - 1)..n
         }
-        None => 0..manifest.orders.len(),
+        None => 0..manifest.epics.len(),
     };
 
-    let order_indices: Vec<usize> = order_range.collect();
+    let epic_indices: Vec<usize> = epic_range.collect();
 
     let global_agents: Vec<String> = args
         .agents
@@ -75,28 +77,25 @@ pub async fn run(args: &OrchestrateArgs, config: &Config) -> Result<()> {
     let global_sem = Arc::new(Semaphore::new(args.max_parallel.max(1)));
     let config_arc = Arc::new(config.clone());
 
-    // Parallel orders stomp the same git workdir + logs when repos overlap — opt-in only.
-    let parallel_orders = order_indices.len() > 1 && !args.sequential && args.parallel_orders;
+    let parallel_epics = epic_indices.len() > 1 && !args.sequential && !args.sequential_epics;
 
-    if order_indices.len() > 1 && !parallel_orders && !args.sequential {
-        info!(
-            "running manifest orders sequentially (shared workdir is unsafe for parallel orders). \
-             Use --parallel-orders if each order targets an isolated clone."
-        );
+    if epic_indices.len() > 1 && !parallel_epics {
+        info!("running manifest epics sequentially (--sequential-epics and/or --sequential)");
     }
 
-    if !parallel_orders {
+    if !parallel_epics {
         let provider = provider::create_provider(config);
-        for &order_idx in &order_indices {
-            let order = &manifest.orders[order_idx];
-            let default_name = format!("Order {}", order_idx + 1);
-            let order_name = order.name.as_deref().unwrap_or(&default_name);
+        let pipeline_work_dir = config.work_dir.clone();
+        for &epic_idx in &epic_indices {
+            let epic = &manifest.epics[epic_idx];
+            let default_name = format!("Epic {}", epic_idx + 1);
+            let epic_name = epic.name.as_deref().unwrap_or(&default_name);
 
-            info!(order = %order_name, "executing order");
+            info!(epic = %epic_name, "executing epic");
 
-            execute_order(
-                order,
-                OrderRunCtx {
+            execute_epic(
+                epic,
+                EpicRunCtx {
                     global_agents: &global_agents,
                     config,
                     provider: &*provider,
@@ -104,31 +103,33 @@ pub async fn run(args: &OrchestrateArgs, config: &Config) -> Result<()> {
                     pipeline_max_iterations,
                     manifest_agent_max_iterations: &manifest_agent_max_iterations,
                     global_sem: global_sem.clone(),
+                    pipeline_work_dir: pipeline_work_dir.clone(),
                 },
             )
             .await?;
 
-            info!(order = %order_name, "order complete");
+            info!(epic = %epic_name, "epic complete");
         }
     } else {
         let mut join_set = JoinSet::new();
 
-        for order_idx in order_indices {
-            let order = manifest.orders[order_idx].clone();
-            let default_name = format!("Order {}", order_idx + 1);
-            let order_name = order.name.clone().unwrap_or(default_name);
+        for epic_idx in epic_indices {
+            let epic = manifest.epics[epic_idx].clone();
+            let default_name = format!("Epic {}", epic_idx + 1);
+            let epic_name = epic.name.clone().unwrap_or(default_name);
             let global_agents = global_agents.clone();
             let config = config_arc.clone();
             let args = args.clone();
             let global_sem = global_sem.clone();
             let manifest_iters = manifest_agent_max_iterations.clone();
+            let pipeline_work_dir = config.work_dir.join("epics").join(format!("{epic_idx:03}"));
 
             join_set.spawn(async move {
-                info!(order = %order_name, "executing order");
+                info!(epic = %epic_name, "executing epic");
                 let provider = provider::create_provider(&config);
-                let result = execute_order(
-                    &order,
-                    OrderRunCtx {
+                let result = execute_epic(
+                    &epic,
+                    EpicRunCtx {
                         global_agents: &global_agents,
                         config: &config,
                         provider: &*provider,
@@ -136,10 +137,11 @@ pub async fn run(args: &OrchestrateArgs, config: &Config) -> Result<()> {
                         pipeline_max_iterations,
                         manifest_agent_max_iterations: &manifest_iters,
                         global_sem,
+                        pipeline_work_dir,
                     },
                 )
                 .await;
-                (order_name, result)
+                (epic_name, result)
             });
         }
 
@@ -147,21 +149,21 @@ pub async fn run(args: &OrchestrateArgs, config: &Config) -> Result<()> {
 
         while let Some(joined) = join_set.join_next().await {
             match joined {
-                Ok((name, Ok(()))) => info!(order = %name, "order complete"),
+                Ok((name, Ok(()))) => info!(epic = %name, "epic complete"),
                 Ok((name, Err(e))) => {
-                    error!(order = %name, error = %e, "order failed");
+                    error!(epic = %name, error = %e, "epic failed");
                     failures.push(format!("{name}: {e}"));
                 }
                 Err(e) => {
-                    error!(error = %e, "order task panicked");
-                    failures.push(format!("order task panic: {e}"));
+                    error!(error = %e, "epic task panicked");
+                    failures.push(format!("epic task panic: {e}"));
                 }
             }
         }
 
         if !failures.is_empty() {
             anyhow::bail!(
-                "{} order(s) failed:\n{}",
+                "{} epic(s) failed:\n{}",
                 failures.len(),
                 failures.join("\n")
             );
@@ -172,10 +174,10 @@ pub async fn run(args: &OrchestrateArgs, config: &Config) -> Result<()> {
     Ok(())
 }
 
-async fn execute_order(order: &Order, ctx: OrderRunCtx<'_>) -> Result<()> {
+async fn execute_epic(epic: &Epic, ctx: EpicRunCtx<'_>) -> Result<()> {
     let mut last_branch_by_repo: HashMap<String, String> = HashMap::new();
 
-    for prd_entry in &order.prds {
+    for prd_entry in &epic.subtasks {
         let mut work_units = build_work_units_for_prd(prd_entry, ctx.global_agents)?;
 
         if work_units.is_empty() {
@@ -208,6 +210,7 @@ async fn execute_order(order: &Order, ctx: OrderRunCtx<'_>) -> Result<()> {
                     ctx.pipeline_max_iterations,
                     ctx.manifest_agent_max_iterations,
                     ctx.global_sem.clone(),
+                    ctx.pipeline_work_dir.clone(),
                 )
                 .await?;
             }
@@ -220,6 +223,7 @@ async fn execute_order(order: &Order, ctx: OrderRunCtx<'_>) -> Result<()> {
                 ctx.pipeline_max_iterations,
                 ctx.manifest_agent_max_iterations,
                 ctx.global_sem.clone(),
+                ctx.pipeline_work_dir.clone(),
             )
             .await?;
         }
@@ -276,7 +280,7 @@ fn build_work_units_for_prd(
     Ok(units)
 }
 
-/// After a PRD's pipelines finish, record feature branches per repo for stacking the next PRD.
+/// After a PRD's pipelines finish, record feature branches per repo for stacking the next subtask.
 fn refresh_branches_after_prd(
     prd_entry: &PrdEntry,
     last_branch_by_repo: &mut HashMap<String, String>,
@@ -343,6 +347,7 @@ fn split_into_waves(units: &[WorkUnit]) -> Vec<Vec<WorkUnit>> {
     waves
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_units(
     units: &[WorkUnit],
     config: &Config,
@@ -351,6 +356,7 @@ async fn execute_units(
     pipeline_max_iterations: u32,
     manifest_agent_max_iterations: &crate::config::AgentIterationOverrides,
     global_sem: Arc<Semaphore>,
+    pipeline_work_dir: PathBuf,
 ) -> Result<()> {
     if args.sequential || units.len() == 1 {
         for unit in units {
@@ -362,6 +368,7 @@ async fn execute_units(
                 pipeline_max_iterations,
                 manifest_agent_max_iterations,
                 global_sem.clone(),
+                pipeline_work_dir.clone(),
             )
             .await?;
         }
@@ -383,6 +390,7 @@ async fn execute_units(
         let interactive = args.interactive;
         let evidence_agents = args.evidence_agents.clone();
         let manifest_iters = manifest_iters.clone();
+        let pipeline_work_dir = pipeline_work_dir.clone();
         join_set.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
 
@@ -398,10 +406,11 @@ async fn execute_units(
                 manifest_agent_max_iterations: manifest_iters.clone(),
                 skip_pr,
                 use_devcontainer: config.use_devcontainer,
+                reuse_devcontainer: config.reuse_devcontainer,
                 interactive,
                 stack_on: unit.stack_on.clone(),
                 evidence_agents,
-                work_dir: config.work_dir.clone(),
+                work_dir: pipeline_work_dir,
             };
 
             let result = runner::run(&run_config, &config, &*provider).await;
@@ -438,6 +447,7 @@ async fn execute_units(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn execute_single_unit(
     unit: &WorkUnit,
     config: &Config,
@@ -446,6 +456,7 @@ async fn execute_single_unit(
     pipeline_max_iterations: u32,
     manifest_agent_max_iterations: &crate::config::AgentIterationOverrides,
     global_sem: Arc<Semaphore>,
+    pipeline_work_dir: PathBuf,
 ) -> Result<()> {
     let _permit = global_sem
         .acquire()
@@ -464,10 +475,11 @@ async fn execute_single_unit(
         manifest_agent_max_iterations: manifest_agent_max_iterations.clone(),
         skip_pr: args.skip_pr,
         use_devcontainer: config.use_devcontainer,
+        reuse_devcontainer: config.reuse_devcontainer,
         interactive: args.interactive,
         stack_on: unit.stack_on.clone(),
         evidence_agents: args.evidence_agents.clone(),
-        work_dir: config.work_dir.clone(),
+        work_dir: pipeline_work_dir,
     };
 
     runner::run(&run_config, config, provider).await?;

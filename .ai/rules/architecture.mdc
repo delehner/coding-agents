@@ -81,13 +81,13 @@ Iterative execution loop for a single agent against a single repo:
 
 ```
 manifest.json
-  → Orchestrator: parse orders, detect same-repo conflicts, split into waves
+  → Orchestrator: parse epics, detect same-repo conflicts, split into waves
     → Runner (per PRD × repo):
         1. clone_or_prepare()        — clone or fetch latest from remote
         2. create_feature_branch()   — agent/<slug>-YYYYMMDD branch
         3. assemble_skills()         — write CLAUDE.md / GEMINI.md from context dir
-        4. DevContainer::start()     — optional; RAII drop warns if not stopped
-        5. AgentRunner::run() × N    — Ralph Loop for each agent in sequence
+        4. DevContainer::start/stop per agent (default) or once if reuse_devcontainer
+        5. AgentRunner::run() × N    — Ralph Loop; provider CLI via devcontainer exec when enabled
         6. stash_workspace_if_dirty() — stash if needed so rebase is not blocked
         7. rebase_onto_latest()      — rebase feature branch onto base; fail on conflict
         8. commits_ahead_of_remote_branch() — skip PR if nothing to merge
@@ -95,13 +95,13 @@ manifest.json
         10. post_pr_evidence()       — gh pr comment for evidence agents
 ```
 
-## Manifest orders
+## Manifest epics
 
-Orchestrator runs **manifest orders sequentially** by default. **`--parallel-orders`** opts into concurrent orders (only safe with isolated workdirs). See `src/pipeline/orchestrator.rs`.
+Orchestrator runs **multiple manifest epics in parallel by default** (isolated clone roots under `{PIPELINE_WORK_DIR}/epics/{index}/`). **`--sequential-epics`** runs epics one after another on the shared workdir. See `src/pipeline/orchestrator.rs`.
 
 ## Wave Stacking
 
-Multiple PRDs targeting the same repo within an `Order` are serialized:
+Multiple subtasks targeting the same repo within an `Epic` are serialized:
 - Wave 1: PRD-A branches from `main`
 - Wave 2: PRD-B branches from PRD-A's feature branch
 - Implemented in `src/pipeline/orchestrator.rs` using branch name chaining
@@ -110,6 +110,6 @@ Multiple PRDs targeting the same repo within an `Order` are serialized:
 
 - **Never use `std::process::Command` directly.** Always use `exec_streaming()` or `exec_capture()` from `src/utils.rs`.
 - **Never use `println!`.** Always use `tracing::info!`, `tracing::warn!`, `tracing::error!`.
-- **Always call `DevContainer::stop()` explicitly** after the agent sequence (success or error — see `run_agent_sequence` + cleanup in `runner.rs`). The `Drop` impl only warns — it does not clean up.
+- **Always call `DevContainer::stop()` explicitly** after each agent (per-agent mode) or after the sequence (`reuse_devcontainer`). See `run_agent_sequence` + `runner.rs`. The `Drop` impl only warns — it does not clean up.
 - **Agent progress files are filesystem memory.** They persist across iterations and are read by subsequent agents. Never delete them during a run.
 - **`rebase_onto_latest()` fails loudly on conflict.** Do not catch the error; let the pipeline fail so humans can resolve.

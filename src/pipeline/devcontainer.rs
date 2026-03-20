@@ -1,8 +1,12 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 use tracing::{info, warn};
 
+use crate::cli::ProviderKind;
 use crate::utils::exec_capture;
 
 /// Represents an active Dev Container with RAII-style cleanup.
@@ -106,6 +110,83 @@ impl DevContainer {
         exec_capture("devcontainer", &cmd_args, None).await
     }
 
+    /// Run `provider_cli` inside this container with streaming stdout (JSONL + formatted logs).
+    /// `provider_args` must use **container** paths (see [`rewrite_workspace_paths_for_container`]).
+    pub async fn exec_provider_streaming(
+        &self,
+        provider_cli: &str,
+        provider_args: &[String],
+        provider_kind: ProviderKind,
+        jsonl_path: Option<PathBuf>,
+        formatted_path: Option<PathBuf>,
+    ) -> Result<(i32, Vec<String>)> {
+        let wf = self.workdir.to_str().unwrap_or(".");
+
+        let mut cmd = Command::new("devcontainer");
+        cmd.arg("exec")
+            .arg("--workspace-folder")
+            .arg(wf)
+            .arg("--")
+            .arg(provider_cli);
+        for a in provider_args {
+            cmd.arg(a);
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .with_context(|| "failed to spawn devcontainer exec")?;
+
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+
+        let stdout_handle = tokio::spawn(async move {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            let mut jsonl_file = jsonl_path
+                .as_ref()
+                .and_then(|p| std::fs::File::create(p).ok());
+            let mut formatted_file = formatted_path
+                .as_ref()
+                .and_then(|p| std::fs::File::create(p).ok());
+
+            let truncate_len = 500usize;
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(f) = &mut jsonl_file {
+                    use std::io::Write;
+                    let _ = writeln!(f, "{line}");
+                }
+                if let Some(f) = &mut formatted_file {
+                    let cursor = std::io::Cursor::new(format!("{line}\n"));
+                    crate::logging::formatter::format_jsonl_stream(
+                        std::io::BufReader::new(cursor),
+                        f,
+                        provider_kind,
+                        truncate_len,
+                    );
+                }
+            }
+        });
+
+        let stderr_handle = tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            let mut collected = Vec::new();
+            while let Ok(Some(line)) = lines.next_line().await {
+                tracing::debug!(stderr = %line, "devcontainer exec");
+                collected.push(line);
+            }
+            collected
+        });
+
+        let status = child.wait().await?;
+        let _ = stdout_handle.await;
+        let stderr_lines = stderr_handle.await.unwrap_or_default();
+
+        Ok((status.code().unwrap_or(-1), stderr_lines))
+    }
+
     /// Stop and remove the container.
     pub async fn stop(&mut self) {
         if self.container_id.is_empty() {
@@ -122,6 +203,28 @@ impl DevContainer {
     }
 }
 
+/// Rewrite absolute paths under the host workspace so the CLI inside the container can open them.
+pub fn rewrite_workspace_paths_for_container(
+    args: &[String],
+    host_workdir: &Path,
+    remote_workspace: &str,
+) -> Vec<String> {
+    args.iter()
+        .map(|a| rewrite_one_path_arg(a, host_workdir, remote_workspace))
+        .collect()
+}
+
+fn rewrite_one_path_arg(arg: &str, host_workdir: &Path, remote_workspace: &str) -> String {
+    let p = Path::new(arg);
+    if let Ok(rel) = p.strip_prefix(host_workdir) {
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let rel = rel.trim_start_matches('/');
+        format!("{}/{}", remote_workspace.trim_end_matches('/'), rel)
+    } else {
+        arg.to_string()
+    }
+}
+
 impl Drop for DevContainer {
     fn drop(&mut self) {
         if !self.container_id.is_empty() {
@@ -130,5 +233,26 @@ impl Drop for DevContainer {
                 self.container_id
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_paths_strips_host_prefix() {
+        let host = Path::new("/tmp/work/wisp");
+        let args = vec![
+            "-p".into(),
+            "/tmp/work/wisp/.pipeline/prompt.md".into(),
+            "--model".into(),
+            "sonnet".into(),
+        ];
+        let out = rewrite_workspace_paths_for_container(&args, host, "/workspaces/wisp");
+        assert_eq!(out[0], "-p");
+        assert_eq!(out[1], "/workspaces/wisp/.pipeline/prompt.md");
+        assert_eq!(out[2], "--model");
+        assert_eq!(out[3], "sonnet");
     }
 }

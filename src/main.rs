@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
             config.work_dir = args.work_dir.clone();
             config.max_iterations = args.max_iterations;
             config.max_parallel = args.max_parallel;
+            config.reuse_devcontainer = args.reuse_devcontainer || config.reuse_devcontainer;
             pipeline::orchestrator::run(&args, &config).await?;
         }
 
@@ -62,6 +63,7 @@ async fn main() -> Result<()> {
                 manifest_agent_max_iterations: Default::default(),
                 skip_pr: args.skip_pr,
                 use_devcontainer: !args.no_devcontainer && config.use_devcontainer,
+                reuse_devcontainer: args.reuse_devcontainer || config.reuse_devcontainer,
                 interactive: config.interactive,
                 stack_on: args.stack_on.clone(),
                 evidence_agents: args.evidence_agents.clone(),
@@ -117,6 +119,7 @@ async fn main() -> Result<()> {
                         configured_max: effective_max,
                         interactive: config.interactive,
                         log_dir: &agent_log_dir,
+                        dev_container: None,
                     },
                 )
                 .await?;

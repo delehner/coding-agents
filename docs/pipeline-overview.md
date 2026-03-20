@@ -1,6 +1,6 @@
 # Pipeline Overview
 
-The Wisp pipeline transforms PRDs into Pull Requests by running specialized AI agents in sequence inside Dev Containers. It supports **Claude Code** and **Gemini CLI** as AI providers (select via `AI_PROVIDER` env var or `wisp --provider <name>`). A **manifest** JSON defines the execution plan: **orders run one after another by default** so multiple orders do not corrupt the same `PIPELINE_WORK_DIR` clone (branch checkout, `.agent-progress/`, Dev Container, and logs). Pass **`--parallel-orders`** only when each order uses an isolated workdir or disjoint repos. Within each order, **PRDs** run **in manifest order** (one PRD finishes before the next starts). For a single PRD, **repositories** are still dispatched in parallel (subject to `--max-parallel`), with automatic stacking when the same repo appears more than once in that PRD or across consecutive PRDs in the order.
+The Wisp pipeline transforms PRDs into Pull Requests by running specialized AI agents in sequence inside Dev Containers. It supports **Claude Code** and **Gemini CLI** as AI providers (select via `AI_PROVIDER` env var or `wisp --provider <name>`). A **manifest** JSON defines the execution plan: **epics run in parallel by default** when more than one epic is executed, with isolated clone roots under `{PIPELINE_WORK_DIR}/epics/{index}/` so concurrent epics do not corrupt the same checkout. Use **`--sequential-epics`** to run epics one after another on the shared `PIPELINE_WORK_DIR`. Within each epic, **subtasks** (PRD entries) run **in manifest order** (one finishes before the next starts). For a single subtask, **repositories** are still dispatched in parallel (subject to `--max-parallel`), with automatic stacking when the same repo appears more than once in that subtask or across consecutive subtasks in the epic. Legacy manifest keys `orders` / `prds` remain accepted.
 
 The pipeline is implemented as a single **Rust binary** (`wisp`) built with Cargo. All logic lives in Rust modules—no bash scripts. Manifest parsing uses `serde_json`, parallel execution uses tokio `Semaphore` + `JoinSet`, and Dev Container lifecycle uses RAII (`Drop` impl) for cleanup.
 
@@ -8,18 +8,18 @@ The pipeline is implemented as a single **Rust binary** (`wisp`) built with Carg
 
 ```mermaid
 flowchart TD
-    Input["[Manifest JSON]\n(orders to PRDs to repos)"]
+    Input["[Manifest JSON]\n(epics to subtasks to repos)"]
     Input --> Orch["wisp orchestrate\n(orchestrator.rs)"]
 
-    Orch --> O1["Order 1\n(sequential by default)"]
-    Orch --> O2["Order 2\n(after order 1)"]
-    Orch --> On["Order N"]
+    Orch --> O1["Epic 1\n(parallel with other epics)"]
+    Orch --> O2["Epic 2\n(parallel with other epics)"]
+    Orch --> On["Epic N"]
 
-    subgraph O1Detail["Order 1 — PRDs sequential;\nrepos for one PRD in parallel"]
-        WU_A1["PRD A x Repo 1"]
-        WU_A2["PRD A x Repo 2"]
+    subgraph O1Detail["Epic 1 — subtasks sequential;\nrepos for one subtask in parallel"]
+        WU_A1["Subtask A x Repo 1"]
+        WU_A2["Subtask A x Repo 2"]
         JoinA(( ))
-        WU_B["PRD B x Repo 1"]
+        WU_B["Subtask B x Repo 1"]
         WU_A1 --> JoinA
         WU_A2 --> JoinA
         JoinA --> WU_B
@@ -63,7 +63,7 @@ flowchart LR
     Input --> Gen["wisp generate prd\n(prd-generator agent)"]
     Ctx --> Gen
     Gen --> PRDs["[PRD Files]\n(01-foundation.md, 02-feature.md, ...)"]
-    Gen --> Manifest["[Manifest JSON]\n(orders, repos, contexts)"]
+    Gen --> Manifest["[Manifest JSON]\n(epics, repos, contexts)"]
     Manifest --> Orch["wisp orchestrate\n(run the pipeline)"]
 ```
 
@@ -81,7 +81,7 @@ flowchart LR
     end
 
     subgraph Layer1["Layer 1: Manifest Orchestrator"]
-        Orch["orchestrator.rs\nOrders to PRDs to repos\nSequential orders (default),\noptional --parallel-orders,\nparallel repos per PRD\n(Semaphore + JoinSet)"]
+        Orch["orchestrator.rs\nEpics to subtasks to repos\nParallel epics (default),\noptional --sequential-epics,\nparallel repos per subtask\n(Semaphore + JoinSet)"]
     end
 
     subgraph Layer2["Layer 2: Single Pipeline"]
@@ -100,7 +100,7 @@ flowchart LR
 | Component | Scope | Responsibility |
 |-----------|-------|----------------|
 | `wisp` | All operations | Unified CLI: single Rust executable, enforces verbose logs + dev containers, `--provider` for AI selection |
-| `src/pipeline/orchestrator.rs` | Manifest → orders → PRDs → repos | Parse manifest (serde_json), run orders sequentially by default (optional `--parallel-orders` + `JoinSet`), run PRDs in list order within each order, parallelize repo work units per PRD (shared `Semaphore` cap) |
+| `src/pipeline/orchestrator.rs` | Manifest → epics → subtasks → repos | Parse manifest (serde_json), run multiple epics in parallel by default (`JoinSet` + per-epic workdir), optional `--sequential-epics`, run subtasks in list order within each epic, parallelize repo work units per subtask (shared `Semaphore` cap) |
 | `src/pipeline/runner.rs` | 1 PRD × 1 repo | Clone repo, start Dev Container (RAII Drop), inject context, run agents, create PR |
 | `src/pipeline/agent.rs` | 1 agent | Ralph Loop: build prompt, run AI agent (Claude or Gemini via `src/provider/`), check completion |
 | `src/provider/` | AI execution | Provider abstraction: Claude Code + Gemini CLI (CLI flags, auth, output formats) |
@@ -112,10 +112,10 @@ flowchart LR
 ```json
 {
   "name": "Project Name",
-  "orders": [
+  "epics": [
     {
       "name": "1 - Foundation",
-      "prds": [
+      "subtasks": [
         {
           "prd": "./prds/01-setup.md",
           "agents": ["architect", "designer"],
@@ -134,8 +134,8 @@ flowchart LR
 }
 ```
 
-- **Orders** execute **sequentially** by default (avoids racing on the same git clone under `PIPELINE_WORK_DIR`). Use **`--parallel-orders`** to run multiple orders concurrently (unsafe when they share the same workdir/repo clone). **`--sequential`** additionally forces a single pipeline at a time (no parallel repo work units within a PRD)
-- **PRDs within an order** execute **in manifest order** (the next PRD starts after the previous one’s work units complete). **Repositories** listed under the same PRD still run **in parallel** (within the global concurrency limit). When the same repo appears multiple times **in one PRD**, work is split into **stacking waves**; when the same repo appears again in a **later PRD** in that order, the next run **stacks** on the previous PRD’s feature branch (see below)
+- **Epics** execute **in parallel by default** when more than one epic runs (each epic uses `{PIPELINE_WORK_DIR}/epics/{index}/` for clones). Use **`--sequential-epics`** to run epics one after another on the shared workdir. **`--sequential`** also disables parallel epics and forces a single pipeline at a time (no parallel repo work units within a subtask)
+- **Subtasks within an epic** execute **in manifest order** (the next subtask starts after the previous one’s work units complete). **Repositories** listed under the same subtask still run **in parallel** (within the global concurrency limit). When the same repo appears multiple times **in one subtask**, work is split into **stacking waves**; when the same repo appears again in a **later subtask** in that epic, the next run **stacks** on the previous subtask’s feature branch (see below)
 - Each **repository** has its own context file, branch, and URL
 - **Context** is per-repo — either a directory of skill files (recommended) or a single file. Assembled into ephemeral `CLAUDE.md` (Claude) or `GEMINI.md` (Gemini) at runtime, never committed
 - **Agents** can be specified at the PRD level and/or the repository level (see below)
@@ -146,8 +146,8 @@ Agents can be configured at two levels in the manifest. They combine (not overri
 
 | Level | Key | Scope |
 |-------|-----|-------|
-| PRD-level `agents` | `orders[].prds[].agents` | Runs for every repository in that PRD |
-| Repo-level `agents` | `orders[].prds[].repositories[].agents` | Runs only for that specific repository |
+| PRD-level `agents` | `epics[].subtasks[].agents` | Runs for every repository in that subtask |
+| Repo-level `agents` | `epics[].subtasks[].repositories[].agents` | Runs only for that specific repository |
 
 The final agent list for a work unit is: **PRD agents first, then repo agents** — matching the natural flow (design before implementation). If neither level specifies agents, the global `--agents` CLI flag (or built-in default) applies.
 
@@ -164,24 +164,24 @@ flowchart TD
     Mode -->|Manifest| ParseManifest[Parse manifest JSON\nwith serde_json]
     Mode -->|Legacy| CollectPRDs[Collect PRD files\nfrom --prd / --prd-dir]
 
-    ParseManifest --> OrderLoop
+    ParseManifest --> EpicLoop
 
-    subgraph OrderLoop["Orders sequential (default);\noptional parallel orders (JoinSet);\ninside each order: next PRD after previous"]
-        Spawn[One order at a time\n(or JoinSet if --parallel-orders)]
-        Spawn --> PerOrder[Per order: loop PRDs\nsequentially]
-        PerOrder --> BuildUnits[Build units for\ncurrent PRD only]
-        BuildUnits --> SameRepo{Same repo\nmultiple times\nin this PRD?}
+    subgraph EpicLoop["Epics parallel (default);\noptional sequential epics;\ninside each epic: next subtask after previous"]
+        Spawn[JoinSet for epics\n(or one at a time if --sequential-epics)]
+        Spawn --> PerEpic[Per epic: loop subtasks\nsequentially]
+        PerEpic --> BuildUnits[Build units for\ncurrent subtask only]
+        BuildUnits --> SameRepo{Same repo\nmultiple times\nin this subtask?}
         SameRepo -->|No| Execute[Execute units\nin parallel via JoinSet]
-        SameRepo -->|Yes| Waves["Waves: stack within\nthis PRD"]
-        Execute --> NextPRD{Another PRD\nin this order?}
-        Waves --> NextPRD
-        NextPRD -->|Yes| BuildUnits
-        NextPRD -->|No| OrderTaskDone[Order task done]
+        SameRepo -->|Yes| Waves["Waves: stack within\nthis subtask"]
+        Execute --> NextSubtask{Another subtask\nin this epic?}
+        Waves --> NextSubtask
+        NextSubtask -->|Yes| BuildUnits
+        NextSubtask -->|No| EpicTaskDone[Epic task done]
     end
 
     CollectPRDs --> LegacyExec[Build and execute\nwork units]
 
-    OrderLoop --> Summary[Print results]
+    EpicLoop --> Summary[Print results]
     LegacyExec --> Summary
 ```
 
@@ -232,18 +232,20 @@ flowchart TD
 
 ### Dev Container Execution Notes
 
-- `runner.rs` starts the container with `.devcontainer/agent/devcontainer.json`.
-- Per-agent `devcontainer exec` uses that same config file, so target repos do not need their own `.devcontainer/devcontainer.json`.
-- Dev Container lifecycle: `runner` calls `stop()` after the agent sequence **whether it succeeds or returns an error**, so blocking-agent failures do not leave a running container. The `Drop` impl only warns if `stop()` was never called (e.g. panic before cleanup).
+- `runner.rs` uses `.devcontainer/agent/devcontainer.json` from the **cloned repo** (target repos do not need their own `.devcontainer/devcontainer.json` at the repo root for editing, but the clone must contain that agent config—typically from the Wisp template or the project you orchestrate).
+- **Provider CLIs run inside the container:** `claude` / `gemini` are invoked via `devcontainer exec --workspace-folder <clone> -- …` with streaming JSONL (same log formatting as host mode). Prompt paths are rewritten from the host checkout path to the container workspace path (e.g. `/workspaces/<repo>`).
+- **Default isolation:** a **fresh** `devcontainer up` for **each agent** in the pipeline, then `stop`/`rm` after that agent’s Ralph loop finishes (all iterations of that agent share one container so `--resume` stays valid). The git worktree is bind-mounted, so commits and files persist across agent boundaries.
+- **`--reuse-devcontainer` / `WISP_REUSE_DEVCONTAINER`:** opt into **one** `devcontainer up` for the entire agent sequence (faster, less isolation between agents).
+- Dev Container lifecycle: `runner` always stops containers on the success path; per-agent containers are stopped after each agent; a reused container is stopped after the sequence. The `Drop` impl only warns if `stop()` was never called (e.g. panic before cleanup).
 - Agent session logs (JSONL / `.log`) go to **`LOG_DIR`** (default `./logs` relative to the **process working directory** where you invoke `wisp`, not the cloned repo). If every agent is skipped as “already completed,” no log files are created for those agents.
 - Agent commit identity is propagated from host git config (`user.name` / `user.email`) into container execution.
 - Agent runtime logs inside containers are written under `.pipeline/logs` (excluded from git), not the target repo `logs/`.
 - Per-agent progress files are cleared at the start of each PRD run to avoid cross-PRD completion leakage.
 - Agent model is resolved per step: `<AGENT_NAME>_MODEL` override first, then provider-specific default (`CLAUDE_MODEL` or `GEMINI_MODEL`).
-- **Runtime artifact protection**: `.agent-progress/`, `logs/`, and `.pipeline/` are appended to `.git/info/exclude` in the clone so they stay untracked. If the repo tracks `CLAUDE.md` / `GEMINI.md` at the root, assembling context still dirties the tree; **before rebase**, any local modifications are **stashed** so `git rebase` can run, then **`git stash pop`** restores them after the PR is created or after skipping PR when there is nothing to merge. If **`git stash pop` fails** (merge conflicts), fix or reset the workdir before the next manifest order: a conflicted tree can block `git checkout` to the next PRD’s branch, which previously could leave `HEAD` on the prior feature branch and open a duplicate PR for the wrong change set. The pipeline now **fails fast** on checkout errors and **refuses `gh pr create`** unless `HEAD` matches the PRD’s feature branch; it also **re-checks out** that branch immediately before rebase/PR.
+- **Runtime artifact protection**: `.agent-progress/`, `logs/`, and `.pipeline/` are appended to `.git/info/exclude` in the clone so they stay untracked. If the repo tracks `CLAUDE.md` / `GEMINI.md` at the root, assembling context still dirties the tree; **before rebase**, any local modifications are **stashed** so `git rebase` can run, then **`git stash pop`** restores them after the PR is created or after skipping PR when there is nothing to merge. If **`git stash pop` fails** (merge conflicts), fix or reset the workdir before the next manifest subtask: a conflicted tree can block `git checkout` to the next PRD’s branch, which previously could leave `HEAD` on the prior feature branch and open a duplicate PR for the wrong change set. The pipeline now **fails fast** on checkout errors and **refuses `gh pr create`** unless `HEAD` matches the PRD’s feature branch; it also **re-checks out** that branch immediately before rebase/PR.
 - **No PR / no push**: A PR is only opened when `origin/<base>..HEAD` has at least one commit. The feature branch is created locally, but **`git push` runs only inside PR creation** — so if agents never committed (e.g. only updated `.agent-progress/` and marked `COMPLETED`), you will see “no commits ahead … skipping PR” and no remote branch. Ensure agents follow `_base-system.md` / developer prompts and commit real changes.
 - **PRD working branch**: The feature branch name is read from the PRD's `**Working Branch**` metadata field (e.g. `delehner/01-foundation`). If not declared, falls back to auto-generation from the PRD title.
-- **Feature branch start point**: New non-stacked branches are created from `origin/<base branch>` so each PRD starts cleanly from the configured base. Stacked work (waves within one PRD, or a later PRD on the same repo in the order) branches from the previous feature branch for that repo.
+- **Feature branch start point**: New non-stacked branches are created from `origin/<base branch>` so each PRD starts cleanly from the configured base. Stacked work (waves within one subtask, or a later subtask on the same repo in the epic) branches from the previous feature branch for that repo.
 - **PR evidence comments**: After PR creation, agent reports (tester, performance, secops, dependency, infrastructure, devops) are posted as PR comments. Configurable via `--evidence-agents` or `EVIDENCE_AGENTS` env var.
 - **Mandatory PR creation**: PR creation retries up to 3 times. If all attempts fail, the pipeline exits with an error. Use `--skip-pr` only for local testing.
 - **Empty repository handling**: When the target repo has no branches (virgin repo), the pipeline seeds `main` with an initial commit and works directly on it — no feature branch, no PR. The finished `main` is pushed to origin at the end. This avoids the impossible "PR to a branch that doesn't exist" scenario.
@@ -254,34 +256,34 @@ Two mechanisms prevent merge conflicts when multiple PRDs target the same reposi
 
 ### Rebase Before PR
 
-Before pushing and creating a PR, the pipeline rebases the feature branch onto the latest target branch. This catches changes from previously merged PRs (cross-order) and external commits. If the rebase fails due to true conflicts, it is aborted and the PR is created anyway — the user resolves the conflict on GitHub.
+Before pushing and creating a PR, the pipeline rebases the feature branch onto the latest target branch. This catches changes from previously merged PRs (cross-epic) and external commits. If the rebase fails due to true conflicts, it is aborted and the PR is created anyway — the user resolves the conflict on GitHub.
 
 ### Stacked Branches (Same Repo)
 
 Two cases:
 
-1. **Same repo listed multiple times under one PRD** — the orchestrator groups units by repo URL and runs **waves**: wave 1 is one unit per distinct repo (in parallel across repos); wave 2+ stacks on the previous wave’s feature branch for that repo (`--stack-on`).
+1. **Same repo listed multiple times under one subtask** — the orchestrator groups units by repo URL and runs **waves**: wave 1 is one unit per distinct repo (in parallel across repos); wave 2+ stacks on the previous wave’s feature branch for that repo (`--stack-on`).
 
-2. **Same repo in consecutive PRDs within an order** — PRDs run in list order, so the earlier PRD finishes first. The next PRD’s pipeline for that repo stacks on the **previous PRD’s** working branch (read from PRD metadata after the first run completes).
+2. **Same repo in consecutive subtasks within an epic** — Subtasks run in list order, so the earlier subtask finishes first. The next subtask’s pipeline for that repo stacks on the **previous subtask’s** working branch (read from PRD metadata after the first run completes).
 
 ```mermaid
 flowchart TD
-    subgraph OnePRD["Single PRD, repo-1 twice in manifest"]
+    subgraph OnePRD["Single subtask, repo-1 twice in manifest"]
         W1["Wave 1: first unit\nfor repo-1"]
         W2["Wave 2: second unit\nstacks on wave 1 branch"]
         W1 --> W2
     end
 
-    subgraph TwoPRDs["PRD A then PRD B, both repo-1"]
-        A["PRD A x repo-1\n completes"]
-        B["PRD B x repo-1\nstacks on A branch"]
+    subgraph TwoPRDs["Subtask A then B, both repo-1"]
+        A["Subtask A x repo-1\n completes"]
+        B["Subtask B x repo-1\nstacks on A branch"]
         A --> B
     end
 ```
 
 - PRs can be chained so a stacked branch targets the previous feature branch instead of `main`; when the base PR merges, GitHub can auto-retarget follow-up PRs.
 
-This is automatic — no manifest changes needed. Different repos under the same PRD still run in parallel (within `--max-parallel`).
+This is automatic — no manifest changes needed. Different repos under the same subtask still run in parallel (within `--max-parallel`).
 
 ## Agent Responsibilities
 
@@ -381,7 +383,7 @@ flowchart LR
 
 | Command | Replaces | Description |
 |---------|----------|-------------|
-| `wisp orchestrate --manifest <path>` | orchestrator.sh | Run full manifest (orders, PRDs, repos) |
+| `wisp orchestrate --manifest <path>` | orchestrator.sh | Run full manifest (epics, subtasks, repos) |
 | `wisp pipeline --prd <path> --repo <url>` | run-pipeline.sh | Single PRD × single repo |
 | `wisp run --agent <name> --workdir <path> --prd <path>` | run-agent.sh | Single agent (Ralph Loop) |
 | `wisp generate prd ...` | generate-prd.sh | Generate PRDs and manifest from description |
@@ -460,18 +462,19 @@ wisp update
 |--------|-------------|---------|
 | `--manifest <path>` | Manifest JSON file | — |
 | `--provider <name>` | AI provider: `claude` or `gemini` (also via `AI_PROVIDER` env var) | claude |
-| `--order <n>` | Run only the nth order (1-based) | All orders |
-| `--auto` | Skip confirmation prompts between orders | Interactive |
+| `--epic <n>` | Run only the nth epic (1-based); `--order` is an alias | All epics |
+| `--auto` | Skip confirmation prompts between epics | Interactive |
 | `--prd <path>` | Legacy: PRD file (repeatable) | — |
 | `--prd-dir <dir>` | Legacy: directory of PRD files | — |
 | `--repo <url>` | Override repo for all PRDs | From manifest |
 | `--branch <name>` | Override branch for all PRDs | From manifest |
 | `--agents <list>` | Comma-separated agent list (global fallback; overridden by per-PRD/per-repo agents in manifest) | architect,designer,migration,developer,accessibility,tester,performance,secops,dependency,infrastructure,devops,rollback,documentation,reviewer |
-| `--sequential` | Run orders one after another and every pipeline strictly serial | Sequential orders; parallel repos per PRD when multiple repos under one PRD |
-| `--parallel-orders` | Run multiple manifest orders at the same time | false (off — avoids shared workdir races) |
-| `--max-parallel <n>` | Max concurrent `runner` pipelines **across all orders** (only matters when work units run in parallel) | 4 |
+| `--sequential` | Run epics sequentially and every pipeline strictly serial | Sequential epics; parallel repos per subtask when multiple repos under one subtask |
+| `--sequential-epics` | Run manifest epics one after another (shared workdir) | false (epics parallel by default with isolated `{work_dir}/epics/{index}/`) |
+| `--max-parallel <n>` | Max concurrent `runner` pipelines **across all epics** (only matters when work units run in parallel) | 4 |
 | `--skip-pr` | Don't create PRs | false |
-| `--no-devcontainer` | Run on host instead of in containers | false |
+| `--no-devcontainer` | Run provider CLI on host instead of `devcontainer exec` | false |
+| `--reuse-devcontainer` | One `devcontainer up` for all agents in each pipeline (also `WISP_REUSE_DEVCONTAINER`) | false |
 | `--no-context-update` | Don't update context file (CLAUDE.md/GEMINI.md) after agents | false |
 | `--model <name>` | Default AI model (provider-specific: sonnet for Claude, gemini-2.5-pro for Gemini) | Provider default |
 | `--max-iterations <n>` | Per-agent iteration cap | 10 |
@@ -484,6 +487,8 @@ wisp update
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--stack-on <branch>` | Stack this branch on a previous feature branch (used by orchestrator for same-repo stacking) | — |
+| `--no-devcontainer` | Run provider CLI on host instead of `devcontainer exec` | false |
+| `--reuse-devcontainer` | One `devcontainer up` for all agents (also `WISP_REUSE_DEVCONTAINER`) | false |
 | `--verbose-logs` | Enable detailed logging (thinking, tool calls, results) | false |
 | `--interactive` | Pause between agents for review and course correction | false |
 
