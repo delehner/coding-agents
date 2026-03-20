@@ -1,8 +1,10 @@
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 
+use crate::cli::ProviderKind;
 use crate::config::Config;
 use crate::pipeline::devcontainer::{rewrite_workspace_paths_for_container, DevContainer};
 use crate::provider::{Provider, RunOpts};
@@ -214,6 +216,29 @@ impl<'a> AgentRunner<'a> {
                         stderr_preview
                     };
                     warn!(agent, stderr = %truncated, "CLI stderr");
+                }
+                if let Some(ref jsonl_path) = opts.log_jsonl {
+                    if jsonl_path.is_file() {
+                        warn!(agent, path = %jsonl_path.display(), "CLI JSONL log");
+                        if let Some((tail_preview, hints)) =
+                            diagnose_failed_jsonl_log(jsonl_path, self.config.provider)
+                        {
+                            warn!(
+                                agent,
+                                lines = %tail_preview,
+                                "CLI JSONL tail (last non-empty lines, truncated per line)"
+                            );
+                            for hint in hints {
+                                warn!(agent, hint = %hint, "CLI JSONL error hint");
+                            }
+                        }
+                    } else {
+                        warn!(
+                            agent,
+                            path = %jsonl_path.display(),
+                            "CLI JSONL path missing or empty — provider may have failed before writing"
+                        );
+                    }
                 }
             }
 
@@ -562,6 +587,113 @@ impl<'a> AgentRunner<'a> {
 /// Abort after this many iterations in a row with no edit to `.agent-progress/{agent}.md`.
 const MAX_STALL_STREAK: u32 = 2;
 
+/// Last bytes read from JSONL when summarizing a failed CLI run (UTF-8 safe cut).
+const JSONL_DIAG_TAIL_BYTES: usize = 16 * 1024;
+/// How many non-empty lines from the tail to log.
+const JSONL_DIAG_TAIL_LINES: usize = 15;
+/// Max characters per logged line (rest replaced with "…").
+const JSONL_DIAG_LINE_CAP: usize = 450;
+
+fn read_utf8_tail(path: &Path, max_bytes: usize) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len() as usize;
+    if len <= max_bytes {
+        let mut s = String::new();
+        file.read_to_string(&mut s).ok()?;
+        return Some(s);
+    }
+    let start = len.saturating_sub(max_bytes);
+    file.seek(std::io::SeekFrom::Start(start as u64)).ok()?;
+    let mut buf = vec![0u8; len - start];
+    file.read_exact(&mut buf).ok()?;
+    let mut cut = 0usize;
+    while cut < buf.len() && (buf[cut] & 0b1100_0000) == 0b1000_0000 {
+        cut += 1;
+    }
+    String::from_utf8(buf[cut..].to_vec()).ok()
+}
+
+fn truncate_jsonl_line(line: &str, max_chars: usize) -> String {
+    let n = line.chars().count();
+    if n <= max_chars {
+        line.to_string()
+    } else {
+        let trunc: String = line.chars().take(max_chars).collect();
+        format!("{trunc}… ({n} chars total)")
+    }
+}
+
+fn extract_jsonl_error_hints(lines: &[String], provider: ProviderKind) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        match provider {
+            ProviderKind::Claude => {
+                if v.get("type").and_then(|t| t.as_str()) == Some("error") {
+                    out.push(truncate_jsonl_line(&v.to_string(), 500));
+                    continue;
+                }
+                if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+                    if !msg.is_empty() {
+                        out.push(format!("message: {}", truncate_jsonl_line(msg, 400)));
+                    }
+                }
+                if let Some(e) = v.get("error") {
+                    let s = e.to_string();
+                    if !s.is_empty() && s != "null" {
+                        out.push(format!("error: {}", truncate_jsonl_line(&s, 400)));
+                    }
+                }
+            }
+            ProviderKind::Gemini => {
+                if let Some(msg) = v
+                    .get("errorMessage")
+                    .or_else(|| v.get("message"))
+                    .and_then(|m| m.as_str())
+                {
+                    if !msg.is_empty() {
+                        out.push(format!("message: {}", truncate_jsonl_line(msg, 400)));
+                    }
+                }
+                if let Some(e) = v.get("error") {
+                    let s = e.to_string();
+                    if !s.is_empty() && s != "null" {
+                        out.push(format!("error: {}", truncate_jsonl_line(&s, 400)));
+                    }
+                }
+            }
+        }
+        if out.len() >= 5 {
+            break;
+        }
+    }
+    out
+}
+
+/// Build tail preview and loose error hints for tracing when the provider exits non-zero.
+fn diagnose_failed_jsonl_log(path: &Path, provider: ProviderKind) -> Option<(String, Vec<String>)> {
+    let content = read_utf8_tail(path, JSONL_DIAG_TAIL_BYTES)?;
+    let mut nonempty: Vec<String> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    let n = nonempty.len();
+    if n == 0 {
+        return None;
+    }
+    let start = n.saturating_sub(JSONL_DIAG_TAIL_LINES);
+    let tail: Vec<String> = nonempty
+        .drain(start..)
+        .map(|l| truncate_jsonl_line(&l, JSONL_DIAG_LINE_CAP))
+        .collect();
+    let hints = extract_jsonl_error_hints(&tail, provider);
+    let preview = tail.join("\n");
+    Some((preview, hints))
+}
+
 fn progress_status_completed(snapshot: &str) -> bool {
     for line in snapshot.lines() {
         let t = line.trim();
@@ -632,7 +764,12 @@ fn prompt_interactive(agent: &str, iteration: u32) -> Result<InteractiveChoice> 
 
 #[cfg(test)]
 mod tests {
-    use super::{progress_status_blocked, progress_status_completed};
+    use crate::cli::ProviderKind;
+
+    use super::{
+        diagnose_failed_jsonl_log, progress_status_blocked, progress_status_completed,
+        read_utf8_tail,
+    };
 
     #[test]
     fn completed_detects_standard_line() {
@@ -647,5 +784,29 @@ mod tests {
     #[test]
     fn blocked_detects_status_line() {
         assert!(progress_status_blocked("## Status: BLOCKED\n"));
+    }
+
+    #[test]
+    fn read_utf8_tail_reads_small_file_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x.jsonl");
+        std::fs::write(&p, "line1\nline2\n").unwrap();
+        let s = read_utf8_tail(&p, 1024).unwrap();
+        assert!(s.contains("line1"));
+        assert!(s.contains("line2"));
+    }
+
+    #[test]
+    fn diagnose_failed_jsonl_log_claude_error_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("run.jsonl");
+        std::fs::write(
+            &p,
+            "{\"type\":\"init\",\"session_id\":\"x\"}\n{\"type\":\"error\",\"message\":\"bad\"}\n",
+        )
+        .unwrap();
+        let (tail, hints) = diagnose_failed_jsonl_log(&p, ProviderKind::Claude).unwrap();
+        assert!(tail.contains("error"));
+        assert!(!hints.is_empty());
     }
 }
