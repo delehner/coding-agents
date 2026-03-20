@@ -192,6 +192,24 @@ describe('WispStatusBar', () => {
       expect(mockStatusBarItem.text).toBe('$(circuit-board) Wisp wisp 1.2.3');
     });
 
+    it('does not append folder name when rootPath does not match any folder', async () => {
+      (vscode.workspace.workspaceFolders as unknown) = [
+        { name: 'frontend', uri: { fsPath: '/workspace/frontend' } },
+        { name: 'backend', uri: { fsPath: '/workspace/backend' } },
+      ];
+      const cli = makeMockCli({
+        runCapture: jest
+          .fn()
+          .mockResolvedValue({ stdout: 'wisp 1.2.3', stderr: '', code: 0 }),
+      } as Partial<WispCli>);
+      const cliFactory = jest.fn().mockResolvedValue(cli);
+      const bar = new WispStatusBar(cliFactory);
+
+      await bar.update('/workspace/unknown');
+
+      expect(mockStatusBarItem.text).toBe('$(circuit-board) Wisp wisp 1.2.3');
+    });
+
     it('does not append folder name when rootPath is undefined in multi-root', async () => {
       (vscode.workspace.workspaceFolders as unknown) = [
         { name: 'frontend', uri: { fsPath: '/workspace/frontend' } },

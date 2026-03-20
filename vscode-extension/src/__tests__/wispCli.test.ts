@@ -249,6 +249,28 @@ describe('WispCli.run()', () => {
 
     expect(onStderr).toHaveBeenCalledWith('error line');
   });
+
+  it('merges opts.env with process.env and passes to spawn', async () => {
+    const { stdout, stderr } = makeMockProc();
+
+    const cli = makeCliInstance();
+    const runPromise = cli.run(['test'], '/tmp', jest.fn(), jest.fn(), {
+      env: { MY_VAR: 'hello' },
+    });
+
+    stdout.end();
+    stderr.end();
+    fireClose(0);
+    await runPromise;
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({ MY_VAR: 'hello' }),
+      }),
+    );
+  });
 });
 
 describe('WispCli.write()', () => {

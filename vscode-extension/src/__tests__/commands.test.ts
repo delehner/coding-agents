@@ -10,6 +10,7 @@ jest.mock('../config', () => ({
   resolveEnv: jest.fn().mockResolvedValue({}),
   resolveWispRoot: jest.fn().mockReturnValue(undefined),
 }));
+jest.mock('../panels/chatPanel');
 
 function makeMockCli(overrides: Partial<WispCli> = {}): WispCli {
   return {
@@ -125,6 +126,27 @@ describe('CommandHandlers', () => {
         expect.stringContaining('No manifest files found'),
       );
       expect(cli.run).not.toHaveBeenCalled();
+    });
+
+    it('sorts multiple manifests alphabetically before showing picker', async () => {
+      const uriB = { fsPath: '/workspace/manifests/b.json', toString: () => '' };
+      const uriA = { fsPath: '/workspace/manifests/a.json', toString: () => '' };
+      // Return B before A to verify sorting flips them
+      (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([uriB, uriA]);
+      (vscode.workspace.asRelativePath as jest.Mock)
+        .mockReturnValueOnce('manifests/b.json')
+        .mockReturnValueOnce('manifests/a.json');
+      (vscode.window.showQuickPick as jest.Mock).mockResolvedValue(undefined);
+      const cli = makeMockCli();
+      const { handlers } = makeHandlers(cli);
+
+      await handlers.orchestrate();
+
+      const callArg = (vscode.window.showQuickPick as jest.Mock).mock.calls[0][0] as Array<{
+        label: string;
+      }>;
+      expect(callArg[0].label).toBe('manifests/a.json');
+      expect(callArg[1].label).toBe('manifests/b.json');
     });
   });
 
@@ -623,6 +645,155 @@ describe('CommandHandlers', () => {
 
       expect(resolveEnv).toHaveBeenCalledWith('/my/custom/root');
     });
+  });
+});
+
+describe('CommandHandlers with ChatPanel (extensionUri provided)', () => {
+  const { ChatPanel } = jest.requireMock('../panels/chatPanel') as {
+    ChatPanel: { createOrShow: jest.Mock };
+  };
+
+  function makeMockPanel() {
+    let savedActionCb: ((msg: { type: string }) => void) | undefined;
+    return {
+      notifyPipelineStart: jest.fn(),
+      notifyAgentStart: jest.fn(),
+      handleStdout: jest.fn(),
+      handleStderr: jest.fn(),
+      onUserAction: jest.fn((cb: (msg: { type: string }) => void) => {
+        savedActionCb = cb;
+        return { dispose: jest.fn() };
+      }),
+      fireAction: (msg: { type: string }) => savedActionCb?.(msg),
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (vscode.workspace.workspaceFolders as unknown) = undefined;
+  });
+
+  function makeHandlersWithPanel(cli: WispCli | null) {
+    const mockPanel = makeMockPanel();
+    ChatPanel.createOrShow = jest.fn().mockReturnValue(mockPanel);
+
+    const channel = {
+      appendLine: jest.fn(),
+      show: jest.fn(),
+      dispose: jest.fn(),
+    } as unknown as vscode.OutputChannel;
+
+    const extensionUri = { fsPath: '/ext' } as vscode.Uri;
+    const cliFactory = jest.fn().mockResolvedValue(cli);
+    const handlers = new CommandHandlers(cliFactory, channel, extensionUri);
+    return { handlers, mockPanel, channel };
+  }
+
+  it('openChatPanel() calls ChatPanel.createOrShow when extensionUri is set', () => {
+    const mockPanel = makeMockPanel();
+    ChatPanel.createOrShow = jest.fn().mockReturnValue(mockPanel);
+    const channel = { appendLine: jest.fn(), show: jest.fn(), dispose: jest.fn() } as unknown as vscode.OutputChannel;
+    const extensionUri = { fsPath: '/ext' } as vscode.Uri;
+    const handlers = new CommandHandlers(jest.fn().mockResolvedValue(null), channel, extensionUri);
+
+    handlers.openChatPanel();
+
+    expect(ChatPanel.createOrShow).toHaveBeenCalledWith(extensionUri);
+  });
+
+  it('orchestrate() registers onUserAction and writes skip/continue/abort to cli', async () => {
+    const mockPanel = makeMockPanel();
+    ChatPanel.createOrShow = jest.fn().mockReturnValue(mockPanel);
+    const channel = { appendLine: jest.fn(), show: jest.fn(), dispose: jest.fn() } as unknown as vscode.OutputChannel;
+    const extensionUri = { fsPath: '/ext' } as vscode.Uri;
+    const writeSpy = jest.fn();
+    const cli = makeMockCli({
+      write: writeSpy,
+      run: jest.fn().mockImplementation(async () => {
+        mockPanel.fireAction({ type: 'skipAgent' });
+        mockPanel.fireAction({ type: 'continueAgent' });
+        mockPanel.fireAction({ type: 'abortPipeline' });
+        return 0;
+      }),
+    } as Partial<WispCli>);
+    const handlers = new CommandHandlers(jest.fn().mockResolvedValue(cli), channel, extensionUri);
+    const uri = { fsPath: '/workspace/manifests/my.json' } as vscode.Uri;
+
+    await handlers.orchestrate(uri);
+
+    expect(writeSpy).toHaveBeenCalledWith('s\n');
+    expect(writeSpy).toHaveBeenCalledWith('c\n');
+    expect(writeSpy).toHaveBeenCalledWith('q\n');
+  });
+
+  it('pipeline() registers onUserAction and forwards skipAgent to cli', async () => {
+    const mockPanel = makeMockPanel();
+    ChatPanel.createOrShow = jest.fn().mockReturnValue(mockPanel);
+    const channel = { appendLine: jest.fn(), show: jest.fn(), dispose: jest.fn() } as unknown as vscode.OutputChannel;
+    const extensionUri = { fsPath: '/ext' } as vscode.Uri;
+    const writeSpy = jest.fn();
+    const cli = makeMockCli({
+      write: writeSpy,
+      run: jest.fn().mockImplementation(async () => {
+        mockPanel.fireAction({ type: 'skipAgent' });
+        return 0;
+      }),
+    } as Partial<WispCli>);
+    const handlers = new CommandHandlers(jest.fn().mockResolvedValue(cli), channel, extensionUri);
+    (vscode.window.showInputBox as jest.Mock).mockResolvedValueOnce('https://github.com/org/repo');
+    const prdUri = { fsPath: '/ws/prds/my.md' } as vscode.Uri;
+
+    await handlers.pipeline(prdUri);
+
+    expect(writeSpy).toHaveBeenCalledWith('s\n');
+  });
+
+  it('pipeline() registers onUserAction and forwards continueAgent and abortPipeline to cli', async () => {
+    const mockPanel = makeMockPanel();
+    ChatPanel.createOrShow = jest.fn().mockReturnValue(mockPanel);
+    const channel = { appendLine: jest.fn(), show: jest.fn(), dispose: jest.fn() } as unknown as vscode.OutputChannel;
+    const extensionUri = { fsPath: '/ext' } as vscode.Uri;
+    const writeSpy = jest.fn();
+    const cli = makeMockCli({
+      write: writeSpy,
+      run: jest.fn().mockImplementation(async () => {
+        mockPanel.fireAction({ type: 'continueAgent' });
+        mockPanel.fireAction({ type: 'abortPipeline' });
+        return 0;
+      }),
+    } as Partial<WispCli>);
+    const handlers = new CommandHandlers(jest.fn().mockResolvedValue(cli), channel, extensionUri);
+    (vscode.window.showInputBox as jest.Mock).mockResolvedValueOnce('https://github.com/org/repo');
+    const prdUri = { fsPath: '/ws/prds/my.md' } as vscode.Uri;
+
+    await handlers.pipeline(prdUri);
+
+    expect(writeSpy).toHaveBeenCalledWith('c\n');
+    expect(writeSpy).toHaveBeenCalledWith('q\n');
+  });
+
+  it('run() registers onUserAction and forwards abortPipeline to cli', async () => {
+    const mockPanel = makeMockPanel();
+    ChatPanel.createOrShow = jest.fn().mockReturnValue(mockPanel);
+    const channel = { appendLine: jest.fn(), show: jest.fn(), dispose: jest.fn() } as unknown as vscode.OutputChannel;
+    const extensionUri = { fsPath: '/ext' } as vscode.Uri;
+    const writeSpy = jest.fn();
+    const cli = makeMockCli({
+      write: writeSpy,
+      run: jest.fn().mockImplementation(async () => {
+        mockPanel.fireAction({ type: 'abortPipeline' });
+        return 0;
+      }),
+    } as Partial<WispCli>);
+    const handlers = new CommandHandlers(jest.fn().mockResolvedValue(cli), channel, extensionUri);
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValue({ label: 'developer' });
+    (vscode.window.showInputBox as jest.Mock)
+      .mockResolvedValueOnce('/tmp/work')
+      .mockResolvedValueOnce('prds/feat.md');
+
+    await handlers.run();
+
+    expect(writeSpy).toHaveBeenCalledWith('q\n');
   });
 });
 
