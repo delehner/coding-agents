@@ -206,6 +206,7 @@ impl<'a> AgentRunner<'a> {
                 }
             }
 
+            let mut jsonl_hints: Vec<String> = Vec::new();
             if exit_code != 0 {
                 warn!(agent, exit_code, iteration, "CLI exited with non-zero code");
                 if !stderr_lines.is_empty() {
@@ -228,9 +229,10 @@ impl<'a> AgentRunner<'a> {
                                 lines = %tail_preview,
                                 "CLI JSONL tail (last non-empty lines, truncated per line)"
                             );
-                            for hint in hints {
+                            for hint in &hints {
                                 warn!(agent, hint = %hint, "CLI JSONL error hint");
                             }
+                            jsonl_hints = hints;
                         }
                     } else {
                         warn!(
@@ -238,6 +240,11 @@ impl<'a> AgentRunner<'a> {
                             path = %jsonl_path.display(),
                             "CLI JSONL path missing or empty — provider may have failed before writing"
                         );
+                    }
+                }
+                if matches!(self.config.provider, ProviderKind::Claude) {
+                    if let Some(msg) = claude_container_auth_fatal_message(&jsonl_hints) {
+                        return Ok(AgentOutcome::Failed(msg));
                     }
                 }
             }
@@ -635,6 +642,16 @@ fn extract_jsonl_error_hints(lines: &[String], provider: ProviderKind) -> Vec<St
                     out.push(truncate_jsonl_line(&v.to_string(), 500));
                     continue;
                 }
+                if v.get("type").and_then(|t| t.as_str()) == Some("result")
+                    && v.get("is_error").and_then(|b| b.as_bool()) == Some(true)
+                {
+                    if let Some(r) = v.get("result").and_then(|x| x.as_str()) {
+                        if !r.is_empty() {
+                            out.push(format!("result: {}", truncate_jsonl_line(r, 400)));
+                        }
+                    }
+                    continue;
+                }
                 if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
                     if !msg.is_empty() {
                         out.push(format!("message: {}", truncate_jsonl_line(msg, 400)));
@@ -685,13 +702,36 @@ fn diagnose_failed_jsonl_log(path: &Path, provider: ProviderKind) -> Option<(Str
         return None;
     }
     let start = n.saturating_sub(JSONL_DIAG_TAIL_LINES);
-    let tail: Vec<String> = nonempty
-        .drain(start..)
-        .map(|l| truncate_jsonl_line(&l, JSONL_DIAG_LINE_CAP))
-        .collect();
-    let hints = extract_jsonl_error_hints(&tail, provider);
-    let preview = tail.join("\n");
+    let tail_raw: Vec<String> = nonempty.drain(start..).collect();
+    let hints = extract_jsonl_error_hints(&tail_raw, provider);
+    let preview = tail_raw
+        .iter()
+        .map(|l| truncate_jsonl_line(l, JSONL_DIAG_LINE_CAP))
+        .collect::<Vec<_>>()
+        .join("\n");
     Some((preview, hints))
+}
+
+/// When Claude JSONL reports a hard auth failure, return an actionable pipeline error.
+fn claude_container_auth_fatal_message(hints: &[String]) -> Option<String> {
+    let blob = hints.join(" ").to_lowercase();
+    if !blob.contains("not logged in")
+        && !blob.contains("please run /login")
+        && !blob.contains("run /login")
+    {
+        return None;
+    }
+    Some(
+        "Claude Code is not authenticated in the agent container (JSONL: not logged in). \
+         Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in the .env file Wisp loads \
+         (repository root next to agents/ when running from source, or ~/.wisp/.env for installs), \
+         or run `claude setup-token` for subscription accounts and put the token in .env. \
+         The shell that launches `wisp` must expose those variables so `devcontainer` can resolve \
+         ${localEnv:...} in .devcontainer/agent/devcontainer.json. \
+         If the container was created when keys were missing, remove it or run a fresh devcontainer up \
+         so containerEnv picks up current values. See docs/prerequisites.md (Authentication, Dev Containers)."
+            .to_string(),
+    )
 }
 
 fn progress_status_completed(snapshot: &str) -> bool {
@@ -767,8 +807,8 @@ mod tests {
     use crate::cli::ProviderKind;
 
     use super::{
-        diagnose_failed_jsonl_log, progress_status_blocked, progress_status_completed,
-        read_utf8_tail,
+        claude_container_auth_fatal_message, diagnose_failed_jsonl_log, extract_jsonl_error_hints,
+        progress_status_blocked, progress_status_completed, read_utf8_tail,
     };
 
     #[test]
@@ -808,5 +848,21 @@ mod tests {
         let (tail, hints) = diagnose_failed_jsonl_log(&p, ProviderKind::Claude).unwrap();
         assert!(tail.contains("error"));
         assert!(!hints.is_empty());
+    }
+
+    #[test]
+    fn extract_hints_claude_result_is_error() {
+        let line = r#"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","session_id":"x"}"#
+            .to_string();
+        let hints = extract_jsonl_error_hints(&[line], ProviderKind::Claude);
+        assert!(hints.iter().any(|h| h.contains("Not logged in")));
+    }
+
+    #[test]
+    fn claude_auth_fatal_message_from_hints() {
+        let hints = vec!["result: Not logged in · Please run /login".to_string()];
+        let msg = claude_container_auth_fatal_message(&hints).unwrap();
+        assert!(msg.contains("ANTHROPIC_API_KEY"));
+        assert!(msg.contains("prerequisites"));
     }
 }

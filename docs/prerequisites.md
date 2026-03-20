@@ -57,6 +57,14 @@ You need **one** AI provider configured:
 | **Claude Max subscription** | Individual users ($100-200/month flat rate) | Run `claude` once to login via browser. Leave `ANTHROPIC_API_KEY` blank. For Dev Containers, set `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (generate with `claude setup-token`) if browser login does not propagate. |
 | **Anthropic API key** | Pay-per-token or organization usage | Get a key at [console.anthropic.com](https://console.anthropic.com), set `ANTHROPIC_API_KEY` in `.env`. |
 
+#### Dev Containers (Wisp agent container)
+
+If JSONL logs show **Not logged in · Please run /login**, Claude Code inside the container has no credentials.
+
+1. Put **`ANTHROPIC_API_KEY`** and/or **`CLAUDE_CODE_OAUTH_TOKEN`** in the `.env` file that **Wisp loads**: for `cargo run` / `./target/release/wisp` from a clone, that is typically `.env` at the repo root next to `agents/` (see `find_root_dir` in the code); for installed binaries, often `~/.wisp/.env`. `dotenvy` loads that file into the `wisp` process; the child `devcontainer` CLI inherits the same environment so `${localEnv:...}` in `.devcontainer/agent/devcontainer.json` resolves correctly.
+2. **Subscription / Max:** run `claude setup-token`, add the token to `.env` as `CLAUDE_CODE_OAUTH_TOKEN`. Browser-only login on the host may not be enough for headless runs in the container.
+3. If the agent image was built when variables were **unset**, remove the old container or trigger a fresh **`devcontainer up`** so `containerEnv` is applied with current values.
+
 ### Gemini CLI (Alternative)
 
 | Method | Setup |
