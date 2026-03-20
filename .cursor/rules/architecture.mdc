@@ -27,7 +27,7 @@ alwaysApply: false
 | `src/pipeline/runner.rs` | Single PRD × repo pipeline (clone → agents → PR) |
 | `src/pipeline/agent.rs` | Ralph Loop: prompt assembly, iteration, completion detection |
 | `src/pipeline/devcontainer.rs` | Dev Container lifecycle with RAII `Drop` impl |
-| `src/git/mod.rs` | `clone_or_prepare()`, `create_feature_branch()`, `stash_workspace_if_dirty()`, `rebase_onto_latest()`, `commits_ahead_of_remote_branch()` |
+| `src/git/mod.rs` | `clone_or_prepare()`, `create_feature_branch()`, `stash_workspace_if_dirty()`, `pop_latest_stash()`, `rebase_onto_latest()`, `commits_ahead_of_remote_branch()` |
 | `src/git/pr.rs` | `gh pr create`, evidence comment posting |
 | `src/context/mod.rs` | Skill assembly in canonical order, YAML frontmatter stripping |
 | `src/logging/mod.rs` | Tracing subscriber init |

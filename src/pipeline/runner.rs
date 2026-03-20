@@ -217,12 +217,16 @@ pub async fn run(
 
     let commits_ahead = git::commits_ahead_of_remote_branch(&workdir, target).await?;
     if commits_ahead == 0 {
-        info!(
+        warn!(
             base = %target,
-            "no commits ahead of origin/{target} — skipping PR (nothing to merge)"
+            branch = %feature_branch,
+            "no commits ahead of origin/{target} — skipping PR (nothing to merge). \
+             Local feature branch may still exist but matches the base tip until agents commit. \
+             Marking COMPLETED in `.agent-progress/` alone does not create commits."
         );
         if stashed {
-            git::drop_latest_stash(&workdir).await;
+            info!("restoring stashed workspace changes");
+            git::pop_latest_stash(&workdir).await;
         }
         info!("pipeline complete (no PR)");
         return Ok(());
@@ -237,7 +241,8 @@ pub async fn run(
     git::post_pr_evidence(&workdir, &pr_url, &prd.slug(), &run_config.evidence_agents).await?;
 
     if stashed {
-        git::drop_latest_stash(&workdir).await;
+        info!("restoring stashed workspace changes after push");
+        git::pop_latest_stash(&workdir).await;
     }
 
     info!(pr = %pr_url, "pipeline complete");

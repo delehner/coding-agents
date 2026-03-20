@@ -31,12 +31,18 @@ pub async fn stash_workspace_if_dirty(workdir: &Path) -> Result<bool> {
     Ok(true)
 }
 
-/// Drop `stash@{0}` after a matching [`stash_workspace_if_dirty`] that returned `true`.
-pub async fn drop_latest_stash(workdir: &Path) {
-    match exec_capture("git", &["stash", "drop"], Some(workdir)).await {
+/// Restore `stash@{0}` after a matching [`stash_workspace_if_dirty`] that returned `true`.
+/// Uses `git stash pop` so workspace changes are not discarded (e.g. when skipping a PR).
+pub async fn pop_latest_stash(workdir: &Path) {
+    match exec_capture("git", &["stash", "pop"], Some(workdir)).await {
         Ok((0, _, _)) => {}
-        Ok((_, _, stderr)) => warn!("git stash drop failed: {stderr}"),
-        Err(e) => warn!(error = %e, "git stash drop failed"),
+        Ok((_, _, stderr)) => {
+            warn!(
+                stderr = %stderr.trim(),
+                "git stash pop failed — stash entry may still exist; resolve conflicts manually"
+            );
+        }
+        Err(e) => warn!(error = %e, "git stash pop failed"),
     }
 }
 
