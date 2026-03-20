@@ -140,18 +140,32 @@ pub async fn create_feature_branch(
 
     if code == 0 {
         info!(branch = %branch_name, "checking out existing branch");
-        exec_capture("git", &["checkout", branch_name], Some(workdir)).await?;
+        let (c2, _, stderr) =
+            exec_capture("git", &["checkout", branch_name], Some(workdir)).await?;
+        if c2 != 0 {
+            bail!(
+                "git checkout {branch_name} failed: {stderr}\n\
+                 Uncommitted changes or merge conflicts (e.g. after a failed `git stash pop`) block checkout."
+            );
+        }
     } else {
         info!(branch = %branch_name, start = ?start_point, "creating new branch");
         if let Some(start) = start_point {
-            exec_capture(
+            let (c2, _, stderr) = exec_capture(
                 "git",
                 &["checkout", "-b", branch_name, start],
                 Some(workdir),
             )
             .await?;
+            if c2 != 0 {
+                bail!("git checkout -b {branch_name} {start} failed: {stderr}");
+            }
         } else {
-            exec_capture("git", &["checkout", "-b", branch_name], Some(workdir)).await?;
+            let (c2, _, stderr) =
+                exec_capture("git", &["checkout", "-b", branch_name], Some(workdir)).await?;
+            if c2 != 0 {
+                bail!("git checkout -b {branch_name} failed: {stderr}");
+            }
         }
     }
     Ok(())

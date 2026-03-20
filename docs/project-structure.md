@@ -161,7 +161,7 @@ flowchart LR
 | `src/pipeline/agent.rs` | Ralph Loop (prompt assembly, completion detection) | Changing iteration logic |
 | `src/pipeline/devcontainer.rs` | Dev Container lifecycle (RAII cleanup) | Changing container behavior |
 | `src/git/mod.rs` | Clone, branch, stash-before-rebase, rebase, stash pop, commit-ahead check, push | Changing git workflow |
-| `src/git/pr.rs` | `gh pr create`, evidence comments | Changing PR creation |
+| `src/git/pr.rs` | `gh pr create` (validates `HEAD` vs expected feature branch, explicit `--head`), evidence comments | Changing PR creation |
 | `src/context/mod.rs` | Skill assembly, frontmatter stripping | Changing context format |
 | `src/logging/mod.rs` | Tracing setup | Changing log config |
 | `src/logging/formatter.rs` | JSONL stream formatting (Claude + Gemini) | Changing log format |

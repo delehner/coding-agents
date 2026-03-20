@@ -91,7 +91,7 @@ manifest.json
         6. stash_workspace_if_dirty() — stash if needed so rebase is not blocked
         7. rebase_onto_latest()      — rebase feature branch onto base; fail on conflict
         8. commits_ahead_of_remote_branch() — skip PR if nothing to merge
-        9. create_pull_request()     — gh pr create
+        9. create_pull_request()     — gh pr create (HEAD must match feature branch; --head)
         10. post_pr_evidence()       — gh pr comment for evidence agents
 ```
 

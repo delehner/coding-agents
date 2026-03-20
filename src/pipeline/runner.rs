@@ -150,6 +150,15 @@ pub async fn run(
         .as_deref()
         .unwrap_or(&run_config.base_branch);
 
+    // Agents or a dirty tree from a prior run (e.g. failed `stash pop`) can leave HEAD on the wrong branch.
+    git::create_feature_branch(&workdir, &feature_branch, None)
+        .await
+        .with_context(|| {
+            format!(
+                "could not check out feature branch {feature_branch} before rebase — clean conflicts or finish merge/rebase, then retry"
+            )
+        })?;
+
     let stashed = git::stash_workspace_if_dirty(&workdir).await?;
 
     let rebased = git::rebase_onto_latest(&workdir, target).await?;
@@ -175,7 +184,7 @@ pub async fn run(
     }
 
     let pr_url = with_retry(3, std::time::Duration::from_secs(5), || async {
-        git::create_pull_request(&workdir, target, &prd.slug()).await
+        git::create_pull_request(&workdir, target, &feature_branch, &prd.slug()).await
     })
     .await?;
 

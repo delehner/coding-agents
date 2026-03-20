@@ -6,12 +6,25 @@ use tracing::{info, warn};
 use crate::utils::exec_capture;
 
 /// Push and create a pull request via `gh`.
+/// `head_branch` must match `git branch --show-current` so a prior failed checkout or stash pop
+/// cannot open a PR for the wrong branch.
 /// Returns the PR URL on success.
 pub async fn create_pull_request(
     workdir: &Path,
     base_branch: &str,
+    head_branch: &str,
     prd_slug: &str,
 ) -> Result<String> {
+    let (_, current_out, _) =
+        exec_capture("git", &["branch", "--show-current"], Some(workdir)).await?;
+    let current = current_out.trim();
+    if current != head_branch {
+        anyhow::bail!(
+            "refusing to open PR: on branch {current:?} but this pipeline expects {head_branch:?}. \
+             Resolve the working tree (e.g. merge conflicts from a failed `git stash pop`) and retry."
+        );
+    }
+
     // Push
     info!("pushing branch to origin");
     let (code, _, stderr) =
@@ -33,13 +46,8 @@ pub async fn create_pull_request(
         format!("Automated PR for {prd_slug}")
     };
 
-    // Get current branch name
-    let (_, branch_stdout, _) =
-        exec_capture("git", &["branch", "--show-current"], Some(workdir)).await?;
-    let branch = branch_stdout.trim();
-
     // Create PR
-    info!(base = %base_branch, head = %branch, "creating pull request");
+    info!(base = %base_branch, head = %head_branch, "creating pull request");
     let (code, stdout, stderr) = exec_capture(
         "gh",
         &[
@@ -47,6 +55,8 @@ pub async fn create_pull_request(
             "create",
             "--base",
             base_branch,
+            "--head",
+            head_branch,
             "--title",
             &format!("[agent] {prd_slug}"),
             "--body",
