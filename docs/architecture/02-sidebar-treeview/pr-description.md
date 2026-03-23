@@ -45,9 +45,9 @@ Manual verification expected:
 
 ## Checklist
 
-- [x] Tests pass (96/96)
+- [x] Tests pass (100/100)
 - [x] Build succeeds (`npx tsc --noEmit` clean)
-- [x] No linter errors
+- [x] No linter errors (fixed 6 ESLint unused-variable errors: 1 in treeView tests, 5 unused `WispCli` imports in PRD-01 test files)
 - [x] Architecture doc reviewed (`docs/architecture/02-sidebar-treeview/architecture.md`)
 - [x] Design spec followed
 - [x] Accessibility: icons use VS Code ThemeIcon (theme-aware), tooltips on all nodes, keyboard navigation inherited from VS Code TreeView API
@@ -55,6 +55,8 @@ Manual verification expected:
 
 ## Review Notes
 
-- Branch `delehner/02-sidebar-treeview` contains both PRD 01 (core commands) and PRD 02 (this sidebar) work. The PRD 02 commits are `ceddf81` and the subsequent tester commit with `watcher.test.ts`.
+- Branch `delehner/02-sidebar-treeview` contains both PRD 01 (core commands) and PRD 02 (this sidebar) work.
 - Empty-state message ("No manifests found in workspace") is shown by VS Code automatically when `getChildren()` returns `[]` for the root; no extra code is needed — the view's built-in empty state message in `package.json` handles this via the `"when": "true"` condition.
-- The 76.85% branch coverage on `provider.ts` reflects defensive null-coalescing paths (`?? []`, `?? ''`) that are unreachable with well-formed data — these are intentional guard rails, not dead code.
+- The 83.72% branch coverage on `treeView/` reflects defensive `?? fallback` optional-chaining paths on `split('/').pop()` that are unreachable in practice — intentional guard rails.
+- All async file reads use `vscode.workspace.fs.readFile` — no `fs.readFileSync` anywhere in the treeView module.
+- `contextValue` constants in `items.ts` (`CONTEXT_VALUES`) are the single source of truth; `package.json` `when` clauses reference the same strings verbatim.

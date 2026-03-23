@@ -1,7 +1,6 @@
 import { PassThrough } from 'node:stream';
 import * as vscode from 'vscode';
 import * as cp from 'node:child_process';
-import { WispCli } from '../wispCli';
 import { WispStatusBar } from '../statusBar';
 import { registerRunCommand } from '../commands/run';
 import { KNOWN_AGENTS } from '../commands/utils';

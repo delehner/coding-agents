@@ -156,7 +156,6 @@ describe('WispTreeDataProvider', () => {
     });
 
     it('reads "prds" key on EpicItem when "subtasks" is absent', async () => {
-      const epic = new EpicItem('Epic Legacy', '/ws/manifests/test.json', []);
       // Directly set prds key via legacy alias to simulate
       const epicWithPrds = new EpicItem('Epic Legacy', '/ws/manifests/test.json', [
         { prd: 'prds/task.md' },
@@ -213,6 +212,104 @@ describe('WispTreeDataProvider', () => {
       provider.onDidChangeTreeData(listener);
       provider.refresh();
       expect(listener).toHaveBeenCalledWith(undefined);
+    });
+  });
+
+  describe('getTreeItem()', () => {
+    it('returns the element unchanged', () => {
+      const item = new SectionItem('Manifests');
+      expect(provider.getTreeItem(item)).toBe(item);
+    });
+  });
+
+  describe('getChildren(unknown element)', () => {
+    it('returns empty array for unrecognised element types', async () => {
+      const orphan = new SubtaskItem('prds/task.md', '', '/ws/manifests/m.json');
+      const children = await provider.getChildren(orphan);
+      expect(children).toHaveLength(0);
+    });
+  });
+
+  describe('getChildren(SectionItem("PRDs"))', () => {
+    it('returns empty array when no PRD files found', async () => {
+      (vscode.workspace.findFiles as jest.Mock).mockResolvedValueOnce([]);
+
+      const section = new SectionItem('PRDs');
+      const children = await provider.getChildren(section);
+
+      expect(children).toHaveLength(0);
+    });
+  });
+
+  describe('PRD files at root (no subdirectory)', () => {
+    it('groups into "(root)" folder when PRD has no subdirectory under prds/', async () => {
+      // Path with prds/ as last segment before filename — no subdirectory
+      const uri = makeUri('/ws/prds/task.md');
+      (vscode.workspace.findFiles as jest.Mock).mockResolvedValueOnce([uri]);
+
+      const section = new SectionItem('PRDs');
+      const children = await provider.getChildren(section);
+
+      expect(children).toHaveLength(1);
+      expect(children[0]).toBeInstanceOf(PrdFolderItem);
+      expect((children[0] as PrdFolderItem).dirName).toBe('(root)');
+    });
+  });
+
+  describe('_extractPrdMeta error handling', () => {
+    it('returns empty title and status when readFile rejects', async () => {
+      (vscode.workspace.fs.readFile as jest.Mock).mockRejectedValueOnce(new Error('ENOENT'));
+
+      const uri = makeUri('/ws/prds/feature/missing.md');
+      const folder = new PrdFolderItem('feature', [uri]);
+      const children = await provider.getChildren(folder);
+
+      expect(children).toHaveLength(1);
+      const prdItem = children[0] as PrdFileItem;
+      expect(JSON.stringify(prdItem.tooltip)).toContain('missing.md');
+    });
+  });
+
+  describe('PrdFileItem label and tooltip defaults', () => {
+    it('uses filename as label when title is empty', async () => {
+      (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValueOnce(
+        encodeText('no heading here'),
+      );
+
+      const uri = makeUri('/ws/prds/feature/my-prd.md');
+      const folder = new PrdFolderItem('feature', [uri]);
+      const children = await provider.getChildren(folder);
+
+      const item = children[0] as PrdFileItem;
+      expect(JSON.stringify(item.tooltip)).toContain('my-prd.md');
+    });
+
+    it('shows "Unknown" status in tooltip when status is absent', async () => {
+      (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValueOnce(
+        encodeText('# My PRD\nno status line'),
+      );
+
+      const uri = makeUri('/ws/prds/feature/my-prd.md');
+      const folder = new PrdFolderItem('feature', [uri]);
+      const children = await provider.getChildren(folder);
+
+      const item = children[0] as PrdFileItem;
+      expect(JSON.stringify(item.tooltip)).toContain('Unknown');
+    });
+  });
+
+  describe('SubtaskItem label fallback', () => {
+    it('uses full prdPath as label when path has no slash', () => {
+      const item = new SubtaskItem('task.md', 'https://github.com/org/repo', '/ws/m.json');
+      expect(item.label).toBe('task.md');
+    });
+  });
+
+  describe('ErrorItem properties', () => {
+    it('has correct label prefix and contextValue', () => {
+      const item = new ErrorItem('/ws/manifests/bad.json', 'Invalid JSON');
+      expect(item.label).toBe('⚠ Invalid JSON');
+      expect(item.contextValue).toBe('wispError');
     });
   });
 });
