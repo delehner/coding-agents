@@ -87,6 +87,13 @@ jobs:
           generate_release_notes: false
 
       - name: Publish to Open VSX Registry
-        if: secrets.OVSX_PAT != ''
         continue-on-error: true
-        run: npx ovsx publish wisp-*.vsix --pat ${{ secrets.OVSX_PAT }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OVSX_PAT}" ]; then
+            echo "Skipping Open VSX: OVSX_PAT secret is not set."
+            exit 0
+          fi
+          npx ovsx publish wisp-*.vsix --pat "${OVSX_PAT}"
