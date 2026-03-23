@@ -2,187 +2,136 @@
 
 ## Overview
 
-Extend the existing `vscode-extension/` scaffold to expose all 9 wisp CLI subcommands as VS Code command palette entries. Each command collects required inputs via QuickInput APIs, streams output line-by-line to a shared Output Channel, and reflects pipeline state in a status bar item. A `cancel()` method is added to `WispCli` to support stopping in-flight processes.
-
----
+This feature extends the wisp VSCode extension scaffold to expose all 9 wisp CLI subcommands as VS Code command palette entries. Each command collects user input via QuickInput, streams subprocess output line-by-line to a dedicated Output Channel, and reports pipeline state via a status bar item.
 
 ## System Design
 
 ### Components
 
-| Component | File | Responsibility |
-|-----------|------|----------------|
-| `WispCli` (extended) | `src/wispCli.ts` | Stores active `ChildProcess`; exposes `cancel()` / `isRunning` |
-| `WispStatusBar` | `src/statusBar.ts` | Status bar item; shows Running/Idle state; click reveals Output Channel |
-| `activate()` (extended) | `src/extension.ts` | Creates shared Output Channel + StatusBar; registers all commands; tracks active CLI ref |
-| `registerOrchestrateCommand` | `src/commands/orchestrate.ts` | File picker → `wisp orchestrate --manifest <path>` |
-| `registerPipelineCommand` | `src/commands/pipeline.ts` | PRD picker + repo/branch inputs → `wisp pipeline` |
-| `registerRunCommand` | `src/commands/run.ts` | Agent QuickPick + workdir + PRD → `wisp run` |
-| `registerGeneratePrdCommand` | `src/commands/generate.ts` | Description input + repeatable repo URLs → `wisp generate prd` |
-| `registerGenerateContextCommand` | `src/commands/generate.ts` | Repo URL + branch → `wisp generate context` |
-| `registerMonitorCommand` | `src/commands/monitor.ts` | Session QuickPick → `wisp monitor` |
-| `registerInstallSkillsCommand` | `src/commands/utils.ts` | No inputs → `wisp install skills` |
-| `registerUpdateCommand` | `src/commands/utils.ts` | No inputs → `wisp update` |
-| `runWithOutput` (shared helper) | `src/commands/utils.ts` | Resolves CLI, calls `cli.run()`, streams to Output Channel, updates StatusBar |
+- **`WispCli`** (`src/wispCli.ts`): Binary resolution (config override → `which`/`where` → install prompt), child process lifecycle (`run()`, `runCapture()`, `cancel()`), `isRunning` guard. Extended with `cancel(): void` and `get isRunning(): boolean` for FR-10.
+- **`WispStatusBar`** (`src/statusBar.ts`): Wraps `vscode.StatusBarItem`. `setRunning()` shows spinner + "Wisp: Running"; `setIdle()` shows check + "Wisp: Idle". Click reveals Output Channel.
+- **`commands/orchestrate.ts`**: FR-1 — manifest file picker → `wisp orchestrate --manifest <path>`.
+- **`commands/pipeline.ts`**: FR-2 — PRD picker + repo URL + branch inputs → `wisp pipeline --prd --repo --branch`.
+- **`commands/run.ts`**: FR-3 — agent QuickPick (14 agents) + workdir + PRD picker → `wisp run --agent --workdir --prd`.
+- **`commands/generate.ts`**: FR-4 + FR-5 — description + repeatable repo URLs → `wisp generate prd`; repo + branch → `wisp generate context`.
+- **`commands/monitor.ts`**: FR-6 — session list via `wisp monitor --list` → QuickPick → `wisp monitor --session <id>`.
+- **`commands/utils.ts`**: FR-7 + FR-8 — `wisp install skills`, `wisp update`.
+- **`extension.ts`**: `activate()` wires all commands, owns single Output Channel + StatusBar instances, tracks `activeCli` for stop support.
 
 ### Data Flow
 
 ```
-User triggers palette command
-  → command handler collects inputs (QuickPick / showInputBox)
-  → runWithOutput(cli, args, cwd, outputChannel, statusBar)
-      → statusBar.setRunning()
-      → activeCli = cli  (stored in extension.ts scope)
-      → cli.run(args, cwd, onStdout, onStderr)
-          → spawns child process; stores ChildProcess ref on cli instance
-          → readline lines → outputChannel.appendLine()
-      → on exit: statusBar.setIdle(); activeCli = null
-  → show success/error notification
+User → Command Palette
+  → command handler (e.g. registerOrchestrateCommand)
+    → pickManifestFile() / showInputBox() / showQuickPick()
+    → WispCli.resolve()  (binary lookup, once per invocation)
+    → statusBar.setRunning() + onActivate(cli)
+    → runWithOutput(cli, args, cwd, outputChannel)
+      → WispCli.run(args, cwd, onStdout, onStderr)
+        → cp.spawn(binaryPath, args, { cwd })
+        → readline on stdout/stderr → outputChannel.appendLine()
+    → statusBar.setIdle() + onDone()
 ```
-
-### Active Process Tracking
-
-`extension.ts` holds `let activeCli: WispCli | null = null`. Commands set this before calling `runWithOutput` and clear it on completion. `wisp.stopPipeline` reads `activeCli` and calls `activeCli.cancel()`.
-
-This is simpler than a registry pattern and matches the single-pipeline-at-a-time mental model (simultaneous pipelines are the orchestrator's concern, not the extension's).
 
 ### Data Models
 
-No new data models. Existing types:
-- `RunOptions` — already in `wispCli.ts` (has `outputChannel` field)
-- `CaptureResult` — unchanged
-
-New type additions to `wispCli.ts`:
-```typescript
-// on WispCli class:
-cancel(): void          // sends SIGTERM to active ChildProcess; noop if not running
-get isRunning(): boolean
-```
+No persistent data models. Runtime state:
+- `activeCli: WispCli | null` — tracks currently-running process for cancel support
+- `WispStatusBar` — wraps `vscode.StatusBarItem` with two states
 
 ### API Contracts
 
-No HTTP APIs. The extension shells out to the `wisp` binary.
-
-**`runWithOutput` signature** (in `src/commands/utils.ts`):
+`WispCli` public surface:
 ```typescript
-async function runWithOutput(
-  cli: WispCli,
-  args: string[],
-  cwd: string,
-  outputChannel: vscode.OutputChannel,
-  statusBar: WispStatusBar,
-  onActivate?: (cli: WispCli) => void,
-  onDone?: () => void,
-): Promise<number>
+static resolve(): Promise<WispCli | null>
+run(args: string[], cwd: string, onStdout, onStderr, opts?): Promise<number>
+runCapture(args: string[], cwd: string): Promise<CaptureResult>
+cancel(): void
+get isRunning(): boolean
 ```
 
-**File picker helpers** (in `src/commands/utils.ts`):
+Shared command utilities (`commands/utils.ts`):
 ```typescript
-async function pickManifestFile(cwd: string): Promise<string | undefined>
-async function pickPrdFile(cwd: string): Promise<string | undefined>
+const KNOWN_AGENTS: string[]  // 14 agent names
+function pickManifestFile(cwd: string): Promise<string | undefined>
+function pickPrdFile(cwd: string): Promise<string | undefined>
+function runWithOutput(cli, args, cwd, outputChannel, statusBar, onActivate, onDone): Promise<void>
 ```
 
----
+Each `commands/*.ts` module exports a single `register*Command(context, outputChannel, statusBar, onActivate, onDone)` function.
 
 ## File Structure
 
 ```
 vscode-extension/
-├── package.json                          # Modified: add 9 new commands to contributes.commands
-└── src/
-    ├── extension.ts                      # Modified: registers all commands + statusBar
-    ├── wispCli.ts                        # Modified: add cancel(), isRunning, store ChildProcess ref
-    ├── statusBar.ts                      # New: WispStatusBar class
-    ├── commands/
-    │   ├── orchestrate.ts                # New: registerOrchestrateCommand()
-    │   ├── pipeline.ts                   # New: registerPipelineCommand()
-    │   ├── run.ts                        # New: registerRunCommand()
-    │   ├── generate.ts                   # New: registerGeneratePrdCommand(), registerGenerateContextCommand()
-    │   ├── monitor.ts                    # New: registerMonitorCommand()
-    │   └── utils.ts                      # New: runWithOutput(), pickManifestFile(), pickPrdFile(), registerInstallSkillsCommand(), registerUpdateCommand()
-    ├── __mocks__/
-    │   └── vscode.ts                     # Modified: add showQuickPick, showWarningMessage, StatusBarItem mocks
-    └── __tests__/
-        ├── wispCli.test.ts               # Modified: add cancel() / isRunning tests
-        ├── orchestrate.test.ts           # New
-        ├── pipeline.test.ts              # New
-        ├── run.test.ts                   # New
-        ├── generate.test.ts              # New
-        ├── monitor.test.ts               # New
-        └── commandUtils.test.ts          # New
+├── src/
+│   ├── extension.ts              # activate(): wires all commands, owns OutputChannel + StatusBar
+│   ├── wispCli.ts                # WispCli class (extended with cancel/isRunning)
+│   ├── statusBar.ts              # WispStatusBar class
+│   ├── commands/
+│   │   ├── orchestrate.ts        # FR-1: wisp.orchestrate
+│   │   ├── pipeline.ts           # FR-2: wisp.pipeline
+│   │   ├── run.ts                # FR-3: wisp.run
+│   │   ├── generate.ts           # FR-4 + FR-5: wisp.generatePrd, wisp.generateContext
+│   │   ├── monitor.ts            # FR-6: wisp.monitor
+│   │   └── utils.ts              # FR-7 + FR-8 + shared helpers
+│   └── __tests__/
+│       ├── wispCli.test.ts       # WispCli + package.json contract tests
+│       ├── commandUtils.test.ts  # KNOWN_AGENTS, pickers, runWithOutput
+│       ├── orchestrate.test.ts
+│       ├── pipeline.test.ts
+│       ├── run.test.ts
+│       ├── generate.test.ts
+│       └── monitor.test.ts
 ```
-
----
 
 ## Technical Decisions
 
 | Decision | Choice | Rationale | Alternatives Considered |
 |----------|--------|-----------|------------------------|
-| Active CLI tracking | `let activeCli` in `extension.ts` module scope | Simple, matches single-pipeline mental model | Registry pattern (overkill for one active process) |
-| Shared run helper | `runWithOutput()` in `commands/utils.ts` | All 7 streaming commands are identical except args; DRY | Inline per command (repetitive) |
-| File pickers | `vscode.workspace.findFiles()` + `showQuickPick` | No new deps; respects workspace | `showOpenDialog` (less integrated feel) |
-| Status bar state | Callback-based via `runWithOutput` | StatusBar has no business knowing about WispCli | Observer pattern (overkill) |
-| Cancel mechanism | SIGTERM via `proc.kill()` | Standard Unix process termination; `cp.spawn` gives direct access | `proc.kill('SIGKILL')` (forceful; try SIGTERM first) |
-
----
+| Command file structure | One file per command group under `commands/` | Aligns with PRD spec; keeps each handler small and independently testable | Single `commands.ts` monolith (harder to test/review) |
+| Shared `runWithOutput` helper | Extracted to `commands/utils.ts` | Eliminates repetition across 8 commands; single place for already-running guard | Inline per command (copy-paste risk) |
+| Output Channel ownership | Created once in `activate()`, passed to all commands | VS Code best practice — one channel per extension, reused across invocations | Per-command channels (clutters Output panel) |
+| `activeCli` tracking | Module-level var in `extension.ts` via `onActivate`/`onDone` callbacks | Simple; avoids shared mutable state crossing module boundaries | `EventEmitter` or context-attached state |
+| Process args | Array (never shell string) | Prevents injection via file paths containing spaces or special chars | Template string interpolation (injection risk) |
+| Binary resolution | Config override → `which`/`where` → install prompt | Matches existing scaffold pattern; zero-config for users with wisp on PATH | Hardcoded path |
 
 ## Dependencies
 
-No new npm dependencies. All required APIs are in:
-- `vscode` — `StatusBarItem`, `QuickPick`, `showInputBox`, `showQuickPick`, `workspace.findFiles`
-- `node:child_process` — already used via `cp.spawn` in `wispCli.ts`
-
----
+No new npm dependencies. All APIs used:
+- `vscode` (built-in extension API)
+- `node:child_process` (already used by scaffold)
+- `node:readline` (already used by scaffold)
 
 ## Risks & Mitigations
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| `wisp generate prd --interactive` requires stdin | Medium | Use `--description` flag only; skip `--interactive` mode in this PRD |
-| Long-running pipelines produce very large Output Channel output | Low | VS Code Output Channel handles this natively; no action needed |
-| Multiple commands triggered in parallel | Low | `runWithOutput` checks `activeCli?.isRunning` and shows error message if already running |
-| `workspace.findFiles` returns no results (manifest/prd not in workspace) | Low | Fall back to `showInputBox` for manual path entry |
-
----
+| Long-running pipelines flood Output Channel | Low | Output Channel handles large output natively; no pagination needed |
+| `wisp generate prd` interactive stdin mode | Medium | Skip `--interactive`; use `--description` flag only (PRD decision) |
+| Multiple workspace folders open | Low | Always use `workspaceFolders[0]` as CWD, matching CLI behavior |
+| Child process not cleaned up on extension deactivate | Low | `deactivate()` nils `activeCli`; process inherits VS Code lifecycle |
 
 ## Implementation Tasks
 
-Ordered for the Developer agent:
-
-1. **Extend `WispCli`** — Add private `_proc: cp.ChildProcess | null = null` field. Store `proc` reference in `run()`. Implement `cancel()` (SIGTERM + clear `_proc`). Implement `get isRunning()`. AC: existing tests still pass; new `cancel()` test passes.
-
-2. **Create `src/statusBar.ts`** — `WispStatusBar` class wrapping `vscode.StatusBarItem`. Constructor creates item with `command: 'wisp.showOutput'`. `setRunning()` sets text to `$(sync~spin) Wisp: Running`. `setIdle()` sets text to `$(check) Wisp: Idle`. `dispose()` cleans up. AC: item visible when extension active; click shows Output Channel.
-
-3. **Create `src/commands/utils.ts`** — `runWithOutput()` helper; `pickManifestFile()` using `workspace.findFiles('**/manifests/*.json')`; `pickPrdFile()` using `workspace.findFiles('**/prds/**/*.md')`; `registerInstallSkillsCommand()`; `registerUpdateCommand()`; `KNOWN_AGENTS` constant (14 agents). AC: unit tests for arg construction pass.
-
-4. **Create `src/commands/orchestrate.ts`** — `registerOrchestrateCommand()`. Calls `pickManifestFile()`; falls back to `showInputBox` if none found. Builds `['orchestrate', '--manifest', path]`. AC: command appears as "Wisp: Orchestrate Manifest"; args constructed correctly.
-
-5. **Create `src/commands/pipeline.ts`** — `registerPipelineCommand()`. PRD file picker, repo URL `showInputBox` with `https://` or `git@` validation, branch `showInputBox` defaulting to `main`. Builds `['pipeline', '--prd', prd, '--repo', repo, '--branch', branch]`. AC: validation rejects invalid URLs.
-
-6. **Create `src/commands/run.ts`** — `registerRunCommand()`. `showQuickPick(KNOWN_AGENTS)` for agent selection, workdir picker defaulting to workspace root, PRD file picker. Builds `['run', '--agent', agent, '--workdir', workdir, '--prd', prd]`. AC: all 14 agents listed.
-
-7. **Create `src/commands/generate.ts`** — `registerGeneratePrdCommand()` and `registerGenerateContextCommand()`. Generate PRD: `showInputBox` for description, repeatable repo URL input via loop. Generate context: repo URL + branch inputs. AC: args contain no shell interpolation.
-
-8. **Create `src/commands/monitor.ts`** — `registerMonitorCommand()`. List sessions from `wisp logs list` output (captured); show in QuickPick; if empty show informational message. Builds `['monitor', '--session', session]`. AC: graceful empty state.
-
-9. **Extend `src/extension.ts`** — Import and register all command modules. Create `WispStatusBar`. Add `wisp.stopPipeline` inline (calls `activeCli?.cancel()`). Add `wisp.showOutput` inline (shows Output Channel). Pass `outputChannel`, `statusBar`, `activeCli` setter to each `register*Command()`. AC: all commands registered; `activate()` compiles under strict mode.
-
-10. **Update `package.json`** — Add all 9 new commands (+ `stopPipeline` + `showOutput`) to `contributes.commands` with correct `command` and `title` keys. AC: commands appear in palette.
-
-11. **Update `src/__mocks__/vscode.ts`** — Add mocks for `showQuickPick`, `showWarningMessage`, `window.createStatusBarItem`, `workspace.findFiles`. AC: all test files compile without type errors.
-
-12. **Write tests** — One test file per command module verifying arg construction. `wispCli.test.ts` additions for `cancel()` / `isRunning`. AC: `npm test` passes.
-
----
+1. **Extend `WispCli`** — add `_proc` field, `cancel()` method, `isRunning` getter. Store `cp.ChildProcess` ref in `run()`.
+2. **Create `WispStatusBar`** — wrap `StatusBarItem`, implement `setRunning()` / `setIdle()` / `dispose()`. Wire click to `wisp.showOutput`.
+3. **Create `commands/utils.ts`** — `KNOWN_AGENTS`, `pickManifestFile()`, `pickPrdFile()`, `runWithOutput()`, `registerInstallSkillsCommand()`, `registerUpdateCommand()`.
+4. **Create `commands/orchestrate.ts`** — manifest picker + `wisp orchestrate --manifest <path>`.
+5. **Create `commands/pipeline.ts`** — PRD picker + repo URL validation + branch input.
+6. **Create `commands/run.ts`** — agent QuickPick + workdir + PRD picker.
+7. **Create `commands/generate.ts`** — description + repeatable repo URLs (generatePrd); repo + branch (generateContext).
+8. **Create `commands/monitor.ts`** — session listing via `runCapture(['monitor', '--list'])` + QuickPick.
+9. **Update `extension.ts`** — register all commands; add `wisp.stopPipeline` + `wisp.showOutput` inline; own Output Channel + StatusBar.
+10. **Update `package.json`** — declare all 11 commands in `contributes.commands`; add `wisp.binaryPath` config entry.
+11. **Write tests** — Jest tests for each module against `src/__mocks__/vscode.ts` mock.
 
 ## Security Considerations
 
-- All child process arguments are passed as array entries to `cp.spawn(binaryPath, args)` — no shell string interpolation. This is already the pattern in `wispCli.ts` and must be maintained in every command's arg-building logic.
-- `wisp.binaryPath` is `machine-overridable` scope (already set) — workspace settings cannot override the binary path, preventing workspace-level binary hijacking.
-- User-provided strings (repo URLs, file paths) are passed as array elements to `cp.spawn`, never concatenated into a shell command string.
+- All child process arguments are passed as array entries to `cp.spawn()` — no shell string interpolation. This is enforced throughout `commands/*.ts`.
+- `WispCli.binaryPath` comes from VS Code config (trusted user input) or `which` resolution — not from workspace file contents.
 
 ## Performance Considerations
 
-- Output streaming: `readline` interface on `proc.stdout` already emits lines as they arrive — no buffering of entire run. This satisfies the 100ms latency requirement.
-- `workspace.findFiles()` is async and non-blocking; results are cached by VS Code internally.
-- Output Channel does not need pagination — VS Code handles large output natively.
+- Output streaming via `readline` on `proc.stdout`/`proc.stderr` — lines appear within one readline tick of emission, well under the 100ms PRD requirement.
+- `WispCli.resolve()` calls `which`/`where` once per command invocation (not cached) — acceptable for interactive use; cost is a single fast subprocess.

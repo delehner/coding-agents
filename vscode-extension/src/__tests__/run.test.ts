@@ -59,6 +59,61 @@ describe('registerRunCommand', () => {
     );
   });
 
+  it('shows error when no workspace folder is open', async () => {
+    (vscode.workspace as unknown as { workspaceFolders: undefined }).workspaceFolders = undefined;
+
+    registerRunCommand(context, outputChannel, statusBar, jest.fn(), jest.fn());
+    const [[, handler]] = (vscode.commands.registerCommand as jest.Mock).mock.calls;
+    await handler();
+
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Wisp: No workspace folder open.');
+    expect(cp.spawn).not.toHaveBeenCalled();
+  });
+
+  it('returns early without spawning when workdir input is cancelled', async () => {
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValueOnce('developer');
+    (vscode.window.showInputBox as jest.Mock).mockResolvedValueOnce(undefined);
+
+    registerRunCommand(context, outputChannel, statusBar, jest.fn(), jest.fn());
+    const [[, handler]] = (vscode.commands.registerCommand as jest.Mock).mock.calls;
+    await handler();
+
+    expect(cp.spawn).not.toHaveBeenCalled();
+  });
+
+  it('returns early without spawning when prd picker is cancelled', async () => {
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValueOnce('developer');
+    (vscode.window.showInputBox as jest.Mock).mockResolvedValueOnce('/workspace');
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([]);
+    (vscode.window.showInputBox as jest.Mock).mockResolvedValueOnce(undefined);
+
+    registerRunCommand(context, outputChannel, statusBar, jest.fn(), jest.fn());
+    const [[, handler]] = (vscode.commands.registerCommand as jest.Mock).mock.calls;
+    await handler();
+
+    expect(cp.spawn).not.toHaveBeenCalled();
+  });
+
+  it('returns early without spawning when WispCli.resolve() returns null after inputs collected', async () => {
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValueOnce('developer');
+    (vscode.window.showInputBox as jest.Mock).mockResolvedValueOnce('/workspace');
+    (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
+      { fsPath: '/workspace/prds/feat/prd.md' },
+    ]);
+    (vscode.window.showQuickPick as jest.Mock).mockResolvedValueOnce('/workspace/prds/feat/prd.md');
+    mockExec.mockImplementation((_cmd, callback: unknown) => {
+      (callback as ExecCallback)(new Error('not found'), '', '');
+      return {} as cp.ChildProcess;
+    });
+    (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue(undefined);
+
+    registerRunCommand(context, outputChannel, statusBar, jest.fn(), jest.fn());
+    const [[, handler]] = (vscode.commands.registerCommand as jest.Mock).mock.calls;
+    await handler();
+
+    expect(cp.spawn).not.toHaveBeenCalled();
+  });
+
   it('builds correct args: run --agent --workdir --prd', async () => {
     (vscode.window.showQuickPick as jest.Mock)
       .mockResolvedValueOnce('developer')

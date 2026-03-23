@@ -33,7 +33,7 @@ Iteration **1** runs `claude -p <assembled-prompt.md>` (or `gemini` equivalent) 
 Without resume, each iteration was a **new** session given only the prompt path; models often issued a single `Read` on that file and stopped — producing identical-looking logs and no progress toward `## Status: COMPLETED`.
 
 ### Stall detection
-If `.agent-progress/<agent>.md` is **unchanged** (after normalizing whitespace) for **two consecutive iterations**, the loop returns **failed** with a clear `Ralph stall` message instead of running until the hard iteration cap. That stops token burn when the model never updates its progress file.
+If `.agent-progress/<agent>.md` is **unchanged** (after normalizing whitespace) for **two consecutive iterations**, the loop returns **failed** with a clear `Ralph stall` message instead of running until the hard iteration cap. That stops token burn when the model never updates its progress file. **Provider hard failures** (e.g. Claude JSONL `not logged in` or `rate_limit`) are detected on non-zero CLI exit and fail immediately with a dedicated message so they are not mislabeled as a stall.
 
 ### Filesystem as Memory
 Progress, decisions, and artifacts are written to `.agent-progress/<agent>.md` and `docs/architecture/`. Each iteration reads this file to understand what's already been done.
@@ -59,7 +59,7 @@ flowchart TD
         L6["6. Architecture Doc\n(if exists, for non-architect agents)"]
         L7["7. Design Doc\n(if exists, for developer/tester/reviewer)"]
         L8["8. Project context file\n(CLAUDE.md or GEMINI.md,\nif exists in target repo)"]
-        L9["9. Iteration Context\n(iteration N of M, working directory)"]
+        L9["9. Iteration Context\n(iteration N of M, repository root for tools;\ncontainer path when using Dev Containers)"]
 
         L1 --- L2 --- L3 --- L4 --- L5 --- L6 --- L7 --- L8 --- L9
     end

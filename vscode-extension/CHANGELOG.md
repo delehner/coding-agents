@@ -1,6 +1,8 @@
 # Changelog
 
-All notable changes to the Wisp VS Code extension will be documented here.
+All notable changes to the Wisp VS Code extension are documented here.
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
@@ -21,19 +23,21 @@ All notable changes to the Wisp VS Code extension will be documented here.
 
 ### Added
 
-- **Full command palette surface** — 11 commands covering all wisp CLI subcommands:
-  - `Wisp: Orchestrate Manifest` — run a full manifest pipeline with a file picker
-  - `Wisp: Run Pipeline` — run a single PRD against one repository
-  - `Wisp: Run Agent` — run any of the 14 named agents directly
-  - `Wisp: Generate PRDs` — generate PRD files from a plain-text description, with repeatable repo URL input
+- **11 command palette commands** covering the full wisp CLI surface:
+  - `Wisp: Show Version` — display the installed wisp binary version
+  - `Wisp: Orchestrate Manifest` — select a manifest JSON file and run the full multi-repo pipeline
+  - `Wisp: Run Pipeline` — run a single PRD through the agent pipeline for a given repo and branch
+  - `Wisp: Run Agent` — run a single named agent (pick from 14) against a workdir and PRD
+  - `Wisp: Generate PRDs` — generate PRD files from a description and optional repo URLs
   - `Wisp: Generate Context` — generate context skill files for a repository
-  - `Wisp: Monitor Logs` — tail logs from a previous pipeline session
+  - `Wisp: Monitor Logs` — select a log session and stream its output live
   - `Wisp: Install Skills` — install Cursor-compatible skill files into the workspace
-  - `Wisp: Update` — self-update the wisp binary
-  - `Wisp: Stop Pipeline` — kill the currently-running pipeline process
-  - `Wisp: Show Output` — reveal the Wisp Output Channel
-- **Streaming output** — agent stdout/stderr appears line-by-line in a dedicated "Wisp" Output Channel
-- **Status bar indicator** — shows running/idle state; click to reveal output
-- **File pickers** — manifest picker (searches `**/manifests/*.json`) and PRD picker (searches `**/prds/**/*.md`) with fallback to manual path input
-- **Process cancellation** — `wisp.stopPipeline` sends SIGTERM to the active process and resets the status bar
+  - `Wisp: Update` — self-update the wisp binary to the latest release
+  - `Wisp: Stop Pipeline` — kill the currently-running wisp process
+  - `Wisp: Show Output` — bring the Wisp output channel into focus
+- **Real-time streaming output** in a dedicated "Wisp" Output Channel — no buffering
+- **Status bar indicator** showing `$(sync~spin) Wisp: Running` / `$(check) Wisp: Idle`; click to open the Output Channel
+- **File pickers** — manifest commands filter to `**/manifests/*.json`; PRD commands filter to `**/prds/**/*.md`
+- **Process cancellation** — `Wisp: Stop Pipeline` sends SIGTERM and resets the status bar
 - **Concurrent pipeline guard** — attempting to start a second pipeline while one is running shows a warning
+- **`wisp.binaryPath` setting** (machine-scoped) to point to a wisp binary not on `PATH`

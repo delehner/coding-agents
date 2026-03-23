@@ -9,6 +9,8 @@ Run wisp pipelines from the VS Code command palette — no terminal required. Al
 
 ## Commands
 
+### Command Palette
+
 All commands are available via the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`):
 
 | Command | Palette Title | Description |

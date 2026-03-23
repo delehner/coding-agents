@@ -13,7 +13,7 @@ Implements all wisp CLI commands as VS Code command palette entries with interac
 - **`vscode-extension/src/commands/generate.ts`**: `wisp.generatePrd` and `wisp.generateContext` — description/URL inputs → `wisp generate prd/context`
 - **`vscode-extension/src/commands/monitor.ts`**: `wisp.monitor` — session list QuickPick → `wisp monitor --session <id>`
 - **`vscode-extension/src/extension.ts`**: Extended activate() — registers all 11 commands, creates WispStatusBar, tracks `activeCli` for cancellation
-- **`vscode-extension/package.json`**: 10 new commands in `contributes.commands`; `wisp.binaryPath` config (machine-scoped)
+- **`vscode-extension/package.json`**: 11 commands in `contributes.commands`; `wisp.binaryPath` config (`machine` scope — not overridable by workspace)
 - **`vscode-extension/README.md`**: Added Features section, Commands table (11 commands), Configuration table
 - **`vscode-extension/CHANGELOG.md`**: Created — v0.1.0 initial release entry
 
@@ -27,20 +27,20 @@ Implements all wisp CLI commands as VS Code command palette entries with interac
 
 ## Testing
 
-- Unit tests: 75 tests across 8 test suites (all pass)
-- New test files: `statusBar.test.ts`, `commandUtils.test.ts`, `orchestrate.test.ts`, `pipeline.test.ts`, `run.test.ts`, `generate.test.ts`, `monitor.test.ts`
-- Extended: `wispCli.test.ts` (cancel/isRunning + contributes.commands declaration checks)
+- Unit tests: 87 tests across 7 test suites (all pass)
+- New test files: `commandUtils.test.ts`, `orchestrate.test.ts`, `pipeline.test.ts`, `run.test.ts`, `generate.test.ts`, `monitor.test.ts`
+- Extended: `wispCli.test.ts` (cancel/isRunning, proc error event, runCapture, statusBar.dispose)
 - Strategy: arg construction and guard logic tested — not VS Code UI interaction internals
-- Coverage: 93.6% statements, 80% branches
+- Coverage: 100% statements / 100% functions / 100% branches / 100% lines
 
 ## Checklist
 
-- [x] Tests pass (75/75)
+- [x] Tests pass (87/87)
 - [x] Build succeeds
 - [x] TypeScript strict mode passes (`tsc --noEmit`)
 - [x] No linter errors
 - [x] Architecture doc reviewed
-- [x] Security considerations addressed (no shell interpolation; machine-scoped binaryPath)
+- [x] Security considerations addressed (no shell interpolation; `machine`-scoped binaryPath)
 - [x] Accessibility: QuickInput placeholder text describes expected format; notifications use appropriate severity
 
 ## Review Notes
@@ -48,3 +48,4 @@ Implements all wisp CLI commands as VS Code command palette entries with interac
 - `wisp.generatePrd` skips `--interactive` mode per PRD spec (open question); uses `--description` flag only
 - Output Channel is created once in `activate()` and reused across all command invocations
 - `wisp.stopPipeline` sends SIGTERM; if the child process ignores SIGTERM, a subsequent SIGKILL could be added in a follow-up
+- **Reviewer security fix**: `wisp.binaryPath` scope was `machine-overridable` (allows workspace override) despite the description stating workspace override is prevented. Changed to `machine` scope, which is strictly machine-level and cannot be overridden by `.vscode/settings.json`, matching the stated security intent of preventing workspace-level binary hijacking.

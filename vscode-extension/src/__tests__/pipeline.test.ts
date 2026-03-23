@@ -139,14 +139,14 @@ describe('registerPipelineCommand', () => {
     expect(cp.spawn).not.toHaveBeenCalled();
   });
 
-  it('uses "main" as branch fallback when user submits empty string', async () => {
+  it('uses "main" as fallback when branch input is empty string', async () => {
     (vscode.workspace.findFiles as jest.Mock).mockResolvedValue([
       { fsPath: '/workspace/prds/feat/prd.md' },
     ]);
     (vscode.window.showQuickPick as jest.Mock).mockResolvedValue('/workspace/prds/feat/prd.md');
     (vscode.window.showInputBox as jest.Mock)
       .mockResolvedValueOnce('https://github.com/org/repo.git')
-      .mockResolvedValueOnce(''); // empty string — branch || 'main' kicks in
+      .mockResolvedValueOnce(''); // user clears the branch field → branch || 'main'
 
     const spawnMock = makeSpawnMock();
 

@@ -12,6 +12,8 @@ pub use pr::{create_pull_request, post_pr_evidence};
 const WISP_STASH_MESSAGE: &str = "wisp: pre-rebase workspace";
 
 /// Stash uncommitted changes so `git rebase` can run (e.g. assembled context overwriting a tracked `CLAUDE.md`).
+/// Includes **untracked** files (`-u`) so a later `git checkout` is not blocked by untracked paths that
+/// would be overwritten by tracked files on another branch.
 /// Returns `true` if a stash entry was created.
 pub async fn stash_workspace_if_dirty(workdir: &Path) -> Result<bool> {
     let (_, porcelain, _) = exec_capture("git", &["status", "--porcelain"], Some(workdir)).await?;
@@ -21,7 +23,7 @@ pub async fn stash_workspace_if_dirty(workdir: &Path) -> Result<bool> {
     info!("stashing local changes before rebase");
     let (code, _, stderr) = exec_capture(
         "git",
-        &["stash", "push", "-m", WISP_STASH_MESSAGE],
+        &["stash", "push", "-u", "-m", WISP_STASH_MESSAGE],
         Some(workdir),
     )
     .await?;
@@ -193,9 +195,89 @@ fn chrono_lite_today() -> String {
     format!("{year}{month:02}{day:02}")
 }
 
+/// Whether `origin` currently has a head named `branch` (uses `ls-remote`, not local remote-tracking refs).
+pub async fn origin_branch_exists_on_remote(workdir: &Path, branch: &str) -> Result<bool> {
+    let (code, stdout, stderr) = exec_capture(
+        "git",
+        &["ls-remote", "--heads", "origin", branch],
+        Some(workdir),
+    )
+    .await?;
+    if code != 0 {
+        bail!("git ls-remote origin {branch} failed: {stderr}");
+    }
+    Ok(!stdout.trim().is_empty())
+}
+
+/// Fetch a branch from `origin` (no-op if already up to date).
+pub async fn fetch_origin_branch(workdir: &Path, branch: &str) -> Result<()> {
+    let (code, _, stderr) =
+        exec_capture("git", &["fetch", "origin", branch], Some(workdir)).await?;
+    if code != 0 {
+        bail!("git fetch origin {branch} failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Push `HEAD` to `origin` with upstream. If the remote rejected the push as non-fast-forward,
+/// fetch `head_branch`, rebase onto `origin/<head_branch>`, and push once more.
+pub async fn push_head_to_origin_with_rebase_retry(
+    workdir: &Path,
+    head_branch: &str,
+) -> Result<()> {
+    info!("pushing branch to origin");
+    let (code, _, stderr) =
+        exec_capture("git", &["push", "-u", "origin", "HEAD"], Some(workdir)).await?;
+    if code == 0 {
+        return Ok(());
+    }
+    let err_lc = stderr.to_lowercase();
+    let looks_behind = err_lc.contains("non-fast-forward")
+        || err_lc.contains("rejected")
+        || err_lc.contains("failed to push");
+    if !looks_behind {
+        bail!("git push failed: {stderr}");
+    }
+
+    info!(
+        head_branch = %head_branch,
+        "push rejected; rebasing onto origin/{head_branch} and retrying"
+    );
+    fetch_origin_branch(workdir, head_branch).await?;
+    let (ok, _, vrf_err) = exec_capture(
+        "git",
+        &["rev-parse", "--verify", &format!("origin/{head_branch}")],
+        Some(workdir),
+    )
+    .await?;
+    if ok != 0 {
+        bail!(
+            "git push failed (non-fast-forward) and origin/{head_branch} is not available after fetch: {vrf_err}"
+        );
+    }
+    let (r_code, _, r_err) = exec_capture(
+        "git",
+        &["rebase", &format!("origin/{head_branch}")],
+        Some(workdir),
+    )
+    .await?;
+    if r_code != 0 {
+        let _ = exec_capture("git", &["rebase", "--abort"], Some(workdir)).await;
+        bail!(
+            "rebase onto origin/{head_branch} failed after non-fast-forward push: {r_err}",
+            head_branch = head_branch
+        );
+    }
+    let (p2, _, e2) = exec_capture("git", &["push", "-u", "origin", "HEAD"], Some(workdir)).await?;
+    if p2 != 0 {
+        bail!("git push failed after rebase: {e2}");
+    }
+    Ok(())
+}
+
 /// Rebase the current branch onto the latest target branch.
 pub async fn rebase_onto_latest(workdir: &Path, target_branch: &str) -> Result<bool> {
-    exec_capture("git", &["fetch", "origin", target_branch], Some(workdir)).await?;
+    fetch_origin_branch(workdir, target_branch).await?;
     let (code, _, stderr) = exec_capture(
         "git",
         &["rebase", &format!("origin/{target_branch}")],

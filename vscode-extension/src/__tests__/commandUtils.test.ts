@@ -105,6 +105,45 @@ describe('pickPrdFile()', () => {
   });
 });
 
+describe('runWithOutput() — stdout/stderr piping', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resolvedCli();
+  });
+
+  it('pipes stdout and stderr lines to the output channel', async () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let closeCallback: ((code: number | null) => void) | undefined;
+
+    jest.spyOn(cp, 'spawn').mockReturnValue({
+      stdout,
+      stderr,
+      on: jest.fn((event: string, cb: (code: number | null) => void) => {
+        if (event === 'close') closeCallback = cb;
+      }),
+      kill: jest.fn(),
+    } as unknown as cp.ChildProcess);
+
+    const cli = await WispCli.resolve();
+    const outputChannel = vscode.window.createOutputChannel('Wisp');
+    const statusBar = new WispStatusBar();
+
+    const runPromise = runWithOutput(cli!, ['orchestrate'], '/tmp', outputChannel, statusBar);
+
+    setImmediate(() => {
+      stdout.push('hello from stdout\n');
+      stderr.push('warn from stderr\n');
+      closeCallback?.(0);
+    });
+
+    const code = await runPromise;
+    expect(code).toBe(0);
+    expect(outputChannel.appendLine).toHaveBeenCalledWith(expect.stringContaining('hello from stdout'));
+    expect(outputChannel.appendLine).toHaveBeenCalledWith(expect.stringContaining('warn from stderr'));
+  });
+});
+
 describe('runWithOutput() — already-running guard', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -223,6 +262,20 @@ describe('registerInstallSkillsCommand', () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Wisp: No workspace folder open.');
     expect(cp.spawn).not.toHaveBeenCalled();
   });
+
+  it('returns early when WispCli.resolve() returns null', async () => {
+    mockExec.mockImplementation((_cmd, callback: unknown) => {
+      (callback as ExecCallback)(new Error('not found'), '', '');
+      return {} as cp.ChildProcess;
+    });
+    (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue(undefined);
+
+    registerInstallSkillsCommand(context, outputChannel, statusBar, jest.fn(), jest.fn());
+    const [[, handler]] = (vscode.commands.registerCommand as jest.Mock).mock.calls;
+    await handler();
+
+    expect(cp.spawn).not.toHaveBeenCalled();
+  });
 });
 
 describe('registerUpdateCommand', () => {
@@ -325,13 +378,13 @@ describe('registerUpdateCommand', () => {
 
   it('falls back to process.cwd() when no workspace folder is open', async () => {
     (vscode.workspace as unknown as { workspaceFolders: undefined }).workspaceFolders = undefined;
-
     const spawnMock = makeSpawnMock(0);
 
     registerUpdateCommand(context, outputChannel, statusBar, jest.fn(), jest.fn());
     const [[, handler]] = (vscode.commands.registerCommand as jest.Mock).mock.calls;
     await handler();
 
+    // Command should still run using process.cwd() as the working directory
     expect(spawnMock).toHaveBeenCalledWith(
       expect.any(String),
       ['update'],
