@@ -146,7 +146,7 @@ describe('registerPipelineCommand', () => {
     (vscode.window.showQuickPick as jest.Mock).mockResolvedValue('/workspace/prds/feat/prd.md');
     (vscode.window.showInputBox as jest.Mock)
       .mockResolvedValueOnce('https://github.com/org/repo.git')
-      .mockResolvedValueOnce(''); // user clears the branch field
+      .mockResolvedValueOnce(''); // user clears the branch field → branch || 'main'
 
     const spawnMock = makeSpawnMock();
 

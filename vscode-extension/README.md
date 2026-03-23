@@ -1,5 +1,7 @@
 # Wisp VS Code extension
 
+Run wisp pipelines from the VS Code command palette — no terminal required. All wisp CLI commands are available as palette entries with interactive input prompts, real-time streaming output, and a status bar indicator.
+
 ## Prerequisites
 
 - Node.js 20+ (for `npm ci` / tooling)

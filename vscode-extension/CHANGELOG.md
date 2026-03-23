@@ -4,6 +4,21 @@ All notable changes to the Wisp VS Code extension are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Wisp Explorer sidebar** — Activity Bar panel (custom Wisp icon) with two sections:
+  - **Manifests** — parses all `manifests/*.json` in the workspace and displays epics, subtasks, and target repos as a collapsible tree; malformed JSON shows an error node
+  - **PRDs** — lists all `prds/**/*.md` files grouped by subdirectory; clicking a node opens the file in the editor with title and status shown as tooltip/description
+- **Context menus** on tree nodes:
+  - Manifest nodes: "Run Orchestrate" (inline), "Open File"
+  - Epic nodes: "Run Orchestrate (this epic only)" (inline)
+  - Subtask nodes: "Run Pipeline" (inline)
+  - PRD file nodes: "Open File"
+- **Auto-refresh** — file system watcher detects changes to `**/manifests/*.json` and `**/prds/**/*.md` and refreshes the tree automatically (500 ms debounce)
+- **Refresh button** (`$(refresh)`) in the Wisp Explorer toolbar for manual rescan
+
 ## [0.1.0] — 2026-03-20
 
 ### Added
@@ -24,4 +39,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Status bar indicator** showing `$(sync~spin) Wisp: Running` / `$(check) Wisp: Idle`; click to open the Output Channel
 - **File pickers** — manifest commands filter to `**/manifests/*.json`; PRD commands filter to `**/prds/**/*.md`
 - **Process cancellation** — `Wisp: Stop Pipeline` sends SIGTERM and resets the status bar
+- **Concurrent pipeline guard** — attempting to start a second pipeline while one is running shows a warning
 - **`wisp.binaryPath` setting** (machine-scoped) to point to a wisp binary not on `PATH`

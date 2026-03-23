@@ -50,7 +50,7 @@ describe('registerMonitorCommand', () => {
     ];
   });
 
-  it('falls back to process.cwd() when no workspace folder is open', async () => {
+  it('returns early when no workspace folder is open and binary is not found', async () => {
     (vscode.workspace as unknown as { workspaceFolders: undefined }).workspaceFolders = undefined;
 
     // WispCli.resolve() fails → command returns early; the important thing is no crash
@@ -116,6 +116,26 @@ describe('registerMonitorCommand', () => {
     expect(vscode.window.showQuickPick).toHaveBeenCalledWith(
       expect.arrayContaining(['session-20240101', 'session-20240102']),
       expect.any(Object),
+    );
+
+    spawnMock.mockRestore();
+  });
+
+  it('uses process.cwd() for logs list when no workspace folder is open', async () => {
+    (vscode.workspace as unknown as { workspaceFolders: undefined }).workspaceFolders = undefined;
+
+    // spawn returns empty stdout so the "no sessions" message is shown — we just
+    // care that the command doesn't throw and that spawn was called with process.cwd()
+    const spawnMock = makeSpawnMock('');
+
+    registerMonitorCommand(context, outputChannel, statusBar, jest.fn(), jest.fn());
+    const [[, handler]] = (vscode.commands.registerCommand as jest.Mock).mock.calls;
+    await handler();
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      expect.any(String),
+      ['logs', 'list'],
+      expect.objectContaining({ cwd: process.cwd() }),
     );
 
     spawnMock.mockRestore();
