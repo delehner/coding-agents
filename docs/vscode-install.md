@@ -22,7 +22,7 @@ The extension activates automatically once installed.
 
 Use this method to install a specific version downloaded from GitHub Releases, or to sideload a build that has not yet been published to the Marketplace.
 
-1. Download the `.vsix` file from [GitHub Releases](https://github.com/delehner/wisp/releases) — look for assets named `wisp-X.Y.Z.vsix`.
+1. Download the `.vsix` file from [GitHub Releases](https://github.com/delehner/wisp/releases) — look for assets named `wisp-cli-X.Y.Z.vsix`.
 2. Open VS Code.
 3. Open the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`).
 4. Run **Extensions: Install from VSIX...**.
@@ -47,7 +47,7 @@ npm run compile
 npm run package
 ```
 
-This produces a `wisp-X.Y.Z.vsix` file in `vscode-extension/`. Install it using Method 2 above.
+This produces a `wisp-cli-X.Y.Z.vsix` file in `vscode-extension/`. Install it using Method 2 above.
 
 ## Verification
 

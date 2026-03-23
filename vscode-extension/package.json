@@ -1,9 +1,13 @@
 {
-  "name": "wisp",
+  "name": "wisp-cli",
   "displayName": "Wisp",
   "description": "Run Wisp AI pipelines directly from your IDE",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "delehner",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/delehner/wisp.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },

@@ -1,6 +1,6 @@
 # Wisp for VS Code
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/delehner.wisp?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=delehner.wisp)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/delehner.wisp-cli?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=delehner.wisp-cli)
 
 Run [Wisp](https://github.com/delehner/wisp) AI pipelines directly from VS Code — no terminal switching required. All Wisp CLI commands are available from the Command Palette with interactive prompts, real-time streaming output, and a status bar indicator.
 
@@ -117,7 +117,7 @@ cd vscode-extension
 npm run package
 ```
 
-Install the generated `wisp-0.1.0.vsix` via **Extensions → … → Install from VSIX…**.
+Install the generated `wisp-cli-<version>.vsix` via **Extensions → … → Install from VSIX…**.
 
 ### Publish
 

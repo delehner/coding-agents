@@ -40,7 +40,7 @@ Both jobs run on `push` to `main` and on all `pull_request` events matching the 
 ### Deploy Steps (Extension Release)
 
 1. Bump `version` in `vscode-extension/package.json` following semver
-2. Run `cd vscode-extension && npm run package` to produce `wisp-<version>.vsix`
+2. Run `cd vscode-extension && npm run package` to produce `wisp-cli-<version>.vsix`
 3. For marketplace publishing (future):
    ```bash
    cd vscode-extension
