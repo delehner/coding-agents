@@ -51,9 +51,15 @@ done
 echo "Updating $FORMULA_PATH (version=$FORMULA_VERSION, ${#SHAS[@]} checksums)..."
 # Update version
 perl -i -pe "s|version \"[^\"]*\"|version \"$FORMULA_VERSION\"|" "$FORMULA_PATH"
-# Replace one PLACEHOLDER at a time (-0777 = slurp whole file, so s/// replaces first only)
-for sha in "${SHAS[@]}"; do
-  perl -i -0777 -pe "s/PLACEHOLDER/$sha/" "$FORMULA_PATH"
-done
+# Replace each sha256 line in formula order (x86 mac, arm mac, x86 linux, arm linux).
+# The tap commits literal checksums, not PLACEHOLDER — replace all 64-hex digests in order.
+export WISP_FORMULA_SHAS="${SHAS[*]}"
+perl -i -0777 -pe '
+  @shas = split /\s+/, $ENV{WISP_FORMULA_SHAS};
+  die "expected 4 checksums, got " . scalar(@shas) unless @shas == 4;
+  $i = 0;
+  s/sha256 "[^"]+"/qq{sha256 "$shas[$i++]"}/ge;
+  die "expected 4 sha256 lines in formula, replaced $i" if $i != 4;
+' "$FORMULA_PATH"
 
 echo "Done. Formula updated."
