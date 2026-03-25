@@ -263,13 +263,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'wisp.explorer.generatePrd',
-      async (item: ManifestItem) => {
+      async (item?: ManifestItem) => {
         const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (!cwd) {
           vscode.window.showErrorMessage('Wisp AI: No workspace folder open.');
           return;
         }
-        const args = await promptGeneratePrdArgs(cwd, item.fsPath);
+        let prefilledManifest: string | undefined;
+        if (item?.fsPath) {
+          prefilledManifest = item.fsPath;
+        } else {
+          const manifestInput = await vscode.window.showInputBox({
+            prompt: 'Manifest JSON path',
+            value: './manifests/project.json',
+            validateInput: (val) => (val.trim() ? undefined : 'Manifest path is required'),
+          });
+          if (manifestInput === undefined) {
+            return;
+          }
+          prefilledManifest = manifestInput;
+        }
+        const args = await promptGeneratePrdArgs(cwd, prefilledManifest);
         if (!args) {
           return;
         }
