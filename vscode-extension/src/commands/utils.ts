@@ -49,12 +49,17 @@ export async function pickPrdFile(cwd: string): Promise<string | undefined> {
   });
 }
 
-function stripAnsi(line: string): string {
+export function stripAnsi(line: string): string {
   return line.replace(/\x1B\[[0-9;]*m/g, '');
 }
 
+export function normalizeLogLine(line: string): string {
+  // Keep original content but remove terminal color/control escapes.
+  return stripAnsi(line);
+}
+
 export function classifyLine(line: string): 'error' | 'warn' | 'info' | 'debug' {
-  const s = stripAnsi(line);
+  const s = normalizeLogLine(line);
   if (/ ERROR |error:/i.test(s)) return 'error';
   if (/ WARN |warning:/i.test(s)) return 'warn';
   if (/ DEBUG | TRACE /i.test(s)) return 'debug';
@@ -97,8 +102,14 @@ export async function runWithOutput(
     exitCode = await cli.run(
       args,
       cwd,
-      (line) => outputChannel[classifyLine(line)](line),
-      (line) => outputChannel[classifyLine(line)](line),
+      (line) => {
+        const formatted = normalizeLogLine(line);
+        outputChannel[classifyLine(formatted)](formatted);
+      },
+      (line) => {
+        const formatted = normalizeLogLine(line);
+        outputChannel[classifyLine(formatted)](formatted);
+      },
     );
     return exitCode;
   } catch (err) {

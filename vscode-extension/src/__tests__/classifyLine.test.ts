@@ -1,4 +1,4 @@
-import { classifyLine } from '../commands/utils';
+import { classifyLine, normalizeLogLine } from '../commands/utils';
 
 describe('classifyLine', () => {
   it('returns "error" for lines containing " ERROR "', () => {
@@ -39,5 +39,11 @@ describe('classifyLine', () => {
 
   it('strips ANSI escape codes and falls back to info when no level keyword', () => {
     expect(classifyLine('\x1B[32mall good\x1B[0m')).toBe('info');
+  });
+});
+
+describe('normalizeLogLine', () => {
+  it('removes ANSI escape codes from rendered output', () => {
+    expect(normalizeLogLine('\x1B[2m0.1s\x1B[0m \x1B[32mINFO\x1B[0m hello')).toBe('0.1s INFO hello');
   });
 });
